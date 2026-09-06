@@ -1,0 +1,349 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+IFS=$'\n\t'
+umask 077
+PATH='/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
+export PATH
+
+readonly OWNER='andris'
+readonly REPOSITORY='rozkalnsandris/RPi5-maintenance'
+readonly RELEASE_TAG='0.2.0'
+readonly EXPECTED_RELEASE_COMMIT='7a5685908e06cc35aa4bb623dd9fa6a3081c4416'
+readonly UPDATER_REL='ops/bin/rpi5-update'
+readonly COMPOSE_POLICY_REL='ops/lib/rpi5-update-compose-policy.sh'
+readonly DOCKER_EVIDENCE_REL='ops/lib/rpi5-update-docker-evidence.sh'
+readonly LOCK_LIB_REL='ops/lib/rpi5-maintenance-locks.sh'
+readonly PROVENANCE_REL='ops/maintenance/updater-source-provenance.json'
+readonly UPDATER_DEST='/usr/local/sbin/rpi5-update'
+readonly MAINTENANCE_LIB='/usr/local/lib/rpi5-maintenance'
+readonly COMPOSE_POLICY_DEST='/usr/local/lib/rpi5-maintenance/rpi5-update-compose-policy.sh'
+readonly DOCKER_EVIDENCE_DEST='/usr/local/lib/rpi5-maintenance/rpi5-update-docker-evidence.sh'
+readonly BACKUP_DEST='/usr/local/sbin/rpi5-backup'
+readonly UPDATE_LOCK='/run/lock/rpi5-update.lock'
+readonly BACKUP_LOCK='/run/lock/rpi5-backup.lock'
+readonly SHARED_LOCK='/run/lock/rpi5-maintenance-exclusive.lock'
+readonly UPDATE_TIMER='rpi5-update.timer'
+readonly MONITOR_TIMER='rpi5-monitor.timer'
+readonly UPDATE_SERVICE='rpi5-update.service'
+readonly EXPECTED_V27_SHA256='f9c83acdd72131d6b696900972aa11d24978645b931846ff4ea8e6a8ed80bdc2'
+readonly EXPECTED_V27_COMPOSE_POLICY_SHA256='bc11a4f487efd791e23dc48f325e1aa396da14b67fc6e7429e300545ce954516'
+readonly EXPECTED_V28_SHA256='3a7898c1f06f7bd5b4136dd6875edf5c7178dad9c8ea4099ef065ce9b1c20882'
+readonly EXPECTED_V28_BLOB='1b647c26ba91d75aad29cf50ddc8d33a21c5e9c2'
+readonly EXPECTED_V28_COMPOSE_POLICY_SHA256='5ee19cbf09f5fa06853d1c121fea8216e1ae245aaa17af81e2affe6ab3aaae4f'
+readonly EXPECTED_V28_COMPOSE_POLICY_BLOB='b461423e2a45d9dc82905fb42afdc9dc16ae877b'
+readonly EXPECTED_V28_DOCKER_EVIDENCE_SHA256='f133adb38eb5499e1e582532f142f1b892ba99755262ce0612d8b21e96716456'
+readonly EXPECTED_V28_DOCKER_EVIDENCE_BLOB='52bc6afa2cc4f56be92ccd4c69243e5fd56208bf'
+readonly EXPECTED_CHECK_MARKER='--check: APT repozitoriju metadata netiks refreshēta'
+readonly FORBIDDEN_REFRESH_MARKER='APT repozitoriju metadatu atjaunināšana...'
+
+readonly -a UNCHANGED_HELPERS=(
+    rpi5-update-hermes-status.sh
+    rpi5-update-locks.sh
+    rpi5-maintenance-locks.sh
+    rpi5-update-apt-policy.sh
+    rpi5-update-reboot.sh
+    rpi5-update-compose-health.sh
+    rpi5-update-space-policy.sh
+    rpi5-update-origin-policy.sh
+    rpi5-update-http-health.sh
+    rpi5-update-cleanup-policy.sh
+)
+
+QUIESCENT_UPDATE_FD=''
+QUIESCENT_BACKUP_FD=''
+QUIESCENT_SHARED_FD=''
+mutation_started=false
+state_dir=''
+updater_stage=''
+compose_stage=''
+docker_evidence_stage=''
+V28_APT_BEFORE=''
+V28_APT_AFTER=''
+
+fail() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
+log() { printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"; }
+sha256_file() { sha256sum "$1" | awk '{print $1}'; }
+unit_enabled() { systemctl is-enabled "$1" 2>/dev/null || true; }
+unit_active() { systemctl is-active "$1" 2>/dev/null || true; }
+
+require_root_file() {
+    local path="$1" uid mode
+    [[ -f "$path" && ! -L "$path" ]] || return 1
+    uid="$(stat -c '%u' "$path")"; mode="$(stat -c '%a' "$path")"
+    [[ "$uid" -eq 0 ]] && (( (8#$mode & 022) == 0 ))
+}
+
+require_root_dir() {
+    local path="$1" uid mode
+    [[ -d "$path" && ! -L "$path" ]] || return 1
+    uid="$(stat -c '%u' "$path")"; mode="$(stat -c '%a' "$path")"
+    [[ "$uid" -eq 0 ]] && (( (8#$mode & 022) == 0 ))
+}
+
+apt_lists_fingerprint() {
+    local root="${1:-/var/lib/apt/lists}"
+    python3 - "$root" <<'PY2'
+import hashlib, sys
+from pathlib import Path
+root=Path(sys.argv[1])
+if not root.is_dir(): raise SystemExit('APT lists directory missing')
+h=hashlib.sha256()
+for p in sorted(root.rglob('*'), key=lambda x:x.as_posix()):
+    st=p.lstat(); h.update(p.relative_to(root).as_posix().encode()+b'\0')
+    h.update(str(st.st_mode).encode()+b'\0'+str(st.st_size).encode()+b'\0'+str(st.st_mtime_ns).encode()+b'\0')
+    if p.is_file() and not p.is_symlink():
+        with p.open('rb') as f:
+            for chunk in iter(lambda:f.read(1024*1024), b''): h.update(chunk)
+print(h.hexdigest())
+PY2
+}
+
+atomic_stage_from_release() {
+    local rel="$1" destination="$2" mode="$3" result_var="$4" staged_path
+    [[ -d "$(dirname -- "$destination")" && ! -L "$(dirname -- "$destination")" ]] || return 1
+    staged_path="$(mktemp "${destination}.v28-stage.XXXXXX")" || return 1
+    printf -v "$result_var" '%s' "$staged_path"
+    if ! owner_git show "${EXPECTED_RELEASE_COMMIT}:${rel}" >"$staged_path"; then return 1; fi
+    chown root:root "$staged_path" || return 1
+    chmod "$mode" "$staged_path" || return 1
+}
+
+atomic_replace_stage() {
+    local stage="$1" destination="$2"
+    [[ -f "$stage" && ! -L "$stage" ]] || return 1
+    [[ "$(dirname -- "$stage")" == "$(dirname -- "$destination")" ]] || return 2
+    mv -Tf -- "$stage" "$destination"
+}
+
+verify_v28_check() {
+    local staged_updater="$1" check_log="$2" apt_root="${3:-/var/lib/apt/lists}" before after
+    before="$(apt_lists_fingerprint "$apt_root")" || return 1
+    "$staged_updater" --check >"$check_log" 2>&1 || return 1
+    after="$(apt_lists_fingerprint "$apt_root")" || return 1
+    [[ "$before" == "$after" ]] || return 1
+    grep -Fq -- "$EXPECTED_CHECK_MARKER" "$check_log" || return 1
+    ! grep -Fq -- "$FORBIDDEN_REFRESH_MARKER" "$check_log" || return 1
+    V28_APT_BEFORE="$before"; V28_APT_AFTER="$after"
+}
+
+acquire_quiescent_one() {
+    local label="$1" path="$2" result_var="$3" rc=0
+    [[ -f "$path" && ! -L "$path" ]] || { log "REFUSED ${label} lock path missing/unsafe: $path"; return 2; }
+    rpi5_try_exclusive_lock "$path" "$result_var" || rc=$?
+    case "$rc" in
+        0) return 0 ;;
+        "$RPI5_LOCK_CONFLICT_RC") log "REFUSED ${label} lock is busy; activation contention rc=${RPI5_LOCK_CONFLICT_RC}"; return "$rc" ;;
+        *) log "FAIL ${label} lock acquisition error rc=${rc}; not classified as contention"; return "$rc" ;;
+    esac
+}
+
+release_fd_var() {
+    local var_name="$1"; local fd="${!var_name:-}"
+    [[ -n "$fd" ]] || return 0
+    rpi5_release_exclusive_lock "$fd" || true
+    printf -v "$var_name" '%s' ''
+}
+
+release_quiescent_window() {
+    release_fd_var QUIESCENT_SHARED_FD
+    release_fd_var QUIESCENT_BACKUP_FD
+    release_fd_var QUIESCENT_UPDATE_FD
+}
+
+acquire_quiescent_window() {
+    local rc=0
+    release_quiescent_window
+    acquire_quiescent_one updater "$UPDATE_LOCK" QUIESCENT_UPDATE_FD || rc=$?
+    (( rc == 0 )) || { release_quiescent_window; return "$rc"; }
+    acquire_quiescent_one backup "$BACKUP_LOCK" QUIESCENT_BACKUP_FD || rc=$?
+    (( rc == 0 )) || { release_quiescent_window; return "$rc"; }
+    acquire_quiescent_one shared "$SHARED_LOCK" QUIESCENT_SHARED_FD || rc=$?
+    (( rc == 0 )) || { release_quiescent_window; return "$rc"; }
+}
+
+on_exit() {
+    local rc=$?
+    trap - EXIT
+    if (( rc != 0 )) && [[ "$mutation_started" == true ]]; then
+        printf 'STOP: V28 activation failed after the first host write; no automatic retry, rollback, cleanup, reboot, or alternate mutation was attempted.\n' >&2
+        printf 'PRESERVED_STATE_DIR=%s\n' "${state_dir:-not-created}" >&2
+        printf 'PRESERVED_UPDATER_STAGE=%s\n' "${updater_stage:-none}" >&2
+        printf 'PRESERVED_COMPOSE_STAGE=%s\n' "${compose_stage:-none}" >&2
+        printf 'PRESERVED_DOCKER_EVIDENCE_STAGE=%s\n' "${docker_evidence_stage:-none}" >&2
+        [[ -f "$UPDATER_DEST" ]] && printf 'CURRENT_UPDATER_SHA256=%s\n' "$(sha256_file "$UPDATER_DEST")" >&2 || true
+        [[ -f "$COMPOSE_POLICY_DEST" ]] && printf 'CURRENT_COMPOSE_POLICY_SHA256=%s\n' "$(sha256_file "$COMPOSE_POLICY_DEST")" >&2 || true
+        [[ -f "$DOCKER_EVIDENCE_DEST" ]] && printf 'CURRENT_DOCKER_EVIDENCE_SHA256=%s\n' "$(sha256_file "$DOCKER_EVIDENCE_DEST")" >&2 || true
+        exit "$rc"
+    fi
+    release_quiescent_window
+    exit "$rc"
+}
+
+main() {
+    [[ ${EUID:-$(id -u)} -eq 0 ]] || fail 'run this operator as root'
+    [[ $# -eq 1 && ( "$1" == '--preflight' || "$1" == '--apply' ) ]] || fail 'usage: rpi5-maintenance-v28-activate --preflight|--apply'
+    local action="$1"
+    for c in awk bash chown chmod cmp cp date dirname flock git grep mktemp mv python3 runuser sha256sum stat systemctl tail; do
+        command -v "$c" >/dev/null 2>&1 || fail "required command is missing: $c"
+    done
+
+    local repo; repo="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)"; readonly repo
+    owner_git() { runuser -u "$OWNER" -- git -C "$repo" "$@"; }
+    [[ -d "$repo/.git" ]] || fail 'operator must run from the RPi5-maintenance checkout'
+    [[ "$(owner_git branch --show-current)" == main ]] || fail 'RPi5-maintenance checkout is not on main'
+    [[ -z "$(owner_git status --porcelain=v1 --untracked-files=all)" ]] || fail 'RPi5-maintenance checkout is not clean'
+    local origin; origin="$(owner_git remote get-url origin)"
+    [[ "$origin" == 'https://github.com/rozkalnsandris/RPi5-maintenance.git' || "$origin" == 'https://github.com/rozkalnsandris/RPi5-maintenance' ]] || fail 'unexpected RPi5-maintenance origin'
+    local head_sha remote_sha release_sha
+    head_sha="$(owner_git rev-parse HEAD)"
+    remote_sha="$(owner_git ls-remote origin refs/heads/main | awk 'NR==1{print $1}')"
+    release_sha="$(owner_git ls-remote origin "refs/tags/${RELEASE_TAG}" | awk 'NR==1{print $1}')"
+    [[ "$head_sha" == "$remote_sha" && "$head_sha" =~ ^[0-9a-f]{40}$ ]] || fail 'operator checkout is not exact current origin/main'
+    [[ "$release_sha" == "$EXPECTED_RELEASE_COMMIT" ]] || fail 'remote 0.2.0 tag does not resolve to expected release commit'
+    owner_git cat-file -e "${EXPECTED_RELEASE_COMMIT}^{commit}" || fail 'expected release commit is not present in local Git object database'
+
+    python3 - "$REPOSITORY" "$RELEASE_TAG" "$EXPECTED_RELEASE_COMMIT" <<'PY2'
+import json,sys,urllib.request
+repo,tag,commit=sys.argv[1:]
+url=f'https://api.github.com/repos/{repo}/releases/tags/{tag}'
+req=urllib.request.Request(url,headers={'User-Agent':'rpi5-maintenance-v28-activate'})
+with urllib.request.urlopen(req,timeout=15) as r: d=json.load(r)
+assert d.get('tag_name')==tag and d.get('target_commitish')==commit
+assert d.get('draft') is False and d.get('prerelease') is False
+body=d.get('body') or ''
+assert commit in body and '`production_activation_authorized=false`' in body
+PY2
+
+    python3 - "$REPOSITORY" "$EXPECTED_RELEASE_COMMIT" <<'PY2'
+import json,sys,urllib.parse,urllib.request
+repo,commit=sys.argv[1:]
+q=urllib.parse.urlencode({'branch':'main','head_sha':commit,'status':'completed','per_page':100})
+url=f'https://api.github.com/repos/{repo}/actions/runs?{q}'
+req=urllib.request.Request(url,headers={'User-Agent':'rpi5-maintenance-v28-activate'})
+with urllib.request.urlopen(req,timeout=15) as r: runs=json.load(r).get('workflow_runs',[])
+ok=[x for x in runs if x.get('name')=='validate' and x.get('event')=='push' and x.get('head_sha')==commit and x.get('conclusion')=='success']
+assert ok, 'no successful exact-release main validate run'
+print(f'RELEASE_EXACT_SHA_CI=PASS run={max(int(x["id"]) for x in ok)}')
+PY2
+
+    local updater_sha updater_blob compose_sha compose_blob docker_sha docker_blob
+    updater_sha="$(owner_git show "${EXPECTED_RELEASE_COMMIT}:${UPDATER_REL}" | sha256sum | awk '{print $1}')"
+    updater_blob="$(owner_git rev-parse "${EXPECTED_RELEASE_COMMIT}:${UPDATER_REL}")"
+    compose_sha="$(owner_git show "${EXPECTED_RELEASE_COMMIT}:${COMPOSE_POLICY_REL}" | sha256sum | awk '{print $1}')"
+    compose_blob="$(owner_git rev-parse "${EXPECTED_RELEASE_COMMIT}:${COMPOSE_POLICY_REL}")"
+    docker_sha="$(owner_git show "${EXPECTED_RELEASE_COMMIT}:${DOCKER_EVIDENCE_REL}" | sha256sum | awk '{print $1}')"
+    docker_blob="$(owner_git rev-parse "${EXPECTED_RELEASE_COMMIT}:${DOCKER_EVIDENCE_REL}")"
+    [[ "$updater_sha" == "$EXPECTED_V28_SHA256" && "$updater_blob" == "$EXPECTED_V28_BLOB" ]] || fail 'release updater identity drifted'
+    [[ "$compose_sha" == "$EXPECTED_V28_COMPOSE_POLICY_SHA256" && "$compose_blob" == "$EXPECTED_V28_COMPOSE_POLICY_BLOB" ]] || fail 'release compose-policy identity drifted'
+    [[ "$docker_sha" == "$EXPECTED_V28_DOCKER_EVIDENCE_SHA256" && "$docker_blob" == "$EXPECTED_V28_DOCKER_EVIDENCE_BLOB" ]] || fail 'release docker-evidence identity drifted'
+    owner_git show "${EXPECTED_RELEASE_COMMIT}:${PROVENANCE_REL}" | python3 -c 'import json,sys; c=json.load(sys.stdin)["candidate"]; sha,blob=sys.argv[1:]; assert c["stage"]=="v28-docker-evidence-hardening-public-safe"; assert c["sha256"]==sha and c["git_blob_sha1"]==blob; assert c["docker_run_scoped_evidence"] is True and c["docker_command_output_capture"] is True; assert c["docker_structured_phase_records"] is True and c["docker_target_selection_reason"] is True; assert c["docker_remediation_policy_changed"] is False' "$EXPECTED_V28_SHA256" "$EXPECTED_V28_BLOB"
+
+    local lock_lib="$repo/$LOCK_LIB_REL"
+    [[ -f "$lock_lib" && ! -L "$lock_lib" ]] || fail 'reviewed lock helper is missing or unsafe'
+    owner_git show "${EXPECTED_RELEASE_COMMIT}:${LOCK_LIB_REL}" | cmp -s - "$lock_lib" || fail 'operator lock helper differs from 0.2.0 release'
+    bash -n "$lock_lib"
+    # shellcheck source=/dev/null
+    source "$lock_lib"
+
+    require_root_dir "$MAINTENANCE_LIB" || fail 'maintenance helper directory is missing, unsafe, or writable by non-root'
+    require_root_dir "$(dirname -- "$UPDATER_DEST")" || fail 'updater destination directory is missing, unsafe, or writable by non-root'
+    require_root_file "$UPDATER_DEST" || fail 'installed weekly updater is missing or unsafe'
+    [[ "$(stat -c '%U:%G:%a' "$UPDATER_DEST")" == 'root:root:750' ]] || fail 'installed updater ownership/mode is unexpected'
+
+    local helper
+    for helper in "${UNCHANGED_HELPERS[@]}"; do
+        local live="$MAINTENANCE_LIB/$helper" rel="ops/lib/$helper"
+        require_root_file "$live" || fail "unchanged runtime helper missing/unsafe: $helper"
+        owner_git show "${EXPECTED_RELEASE_COMMIT}:${rel}" | cmp -s - "$live" || fail "unchanged runtime helper drifted from 0.2.0: $helper"
+    done
+
+    local live_updater_before; live_updater_before="$(sha256_file "$UPDATER_DEST")"
+    case "$live_updater_before" in
+        "$EXPECTED_V28_SHA256")
+            require_root_file "$COMPOSE_POLICY_DEST" && [[ "$(sha256_file "$COMPOSE_POLICY_DEST")" == "$EXPECTED_V28_COMPOSE_POLICY_SHA256" ]] || fail 'V28 updater installed but compose-policy differs'
+            require_root_file "$DOCKER_EVIDENCE_DEST" && [[ "$(sha256_file "$DOCKER_EVIDENCE_DEST")" == "$EXPECTED_V28_DOCKER_EVIDENCE_SHA256" ]] || fail 'V28 updater installed but docker-evidence helper differs'
+            echo "RELEASE_TAG=$RELEASE_TAG"; echo "RELEASE_COMMIT=$EXPECTED_RELEASE_COMMIT"; echo 'V28_ALREADY_CURRENT=PASS'; exit 0 ;;
+        "$EXPECTED_V27_SHA256")
+            require_root_file "$COMPOSE_POLICY_DEST" || fail 'V27 compose-policy helper missing/unsafe'
+            [[ "$(sha256_file "$COMPOSE_POLICY_DEST")" == "$EXPECTED_V27_COMPOSE_POLICY_SHA256" ]] || fail 'V27 compose-policy helper does not match reviewed predecessor'
+            [[ ! -e "$DOCKER_EVIDENCE_DEST" ]] || fail 'unexpected docker-evidence helper exists before V28 activation'
+            ;;
+        *) fail 'installed updater is not the exact reviewed V27 predecessor or exact V28' ;;
+    esac
+    [[ "$(unit_active "$UPDATE_SERVICE")" != active ]] || fail 'weekly updater service is currently active'
+
+    local update_timer_enabled_before update_timer_active_before monitor_timer_enabled_before monitor_timer_active_before backup_sha_before='missing'
+    update_timer_enabled_before="$(unit_enabled "$UPDATE_TIMER")"; update_timer_active_before="$(unit_active "$UPDATE_TIMER")"
+    monitor_timer_enabled_before="$(unit_enabled "$MONITOR_TIMER")"; monitor_timer_active_before="$(unit_active "$MONITOR_TIMER")"
+    [[ -f "$BACKUP_DEST" && ! -L "$BACKUP_DEST" ]] && backup_sha_before="$(sha256_file "$BACKUP_DEST")"
+
+    local lock_rc=0; acquire_quiescent_window || lock_rc=$?
+    case "$lock_rc" in 0) ;; "$RPI5_LOCK_CONFLICT_RC") fail 'maintenance quiescent window is busy; STOP before mutation' ;; *) fail "maintenance quiescent lock acquisition failed rc=$lock_rc" ;; esac
+
+    echo "RELEASE_TAG=$RELEASE_TAG"
+    echo "RELEASE_COMMIT=$EXPECTED_RELEASE_COMMIT"
+    echo "OPERATOR_MAIN_SHA=$head_sha"
+    echo "LIVE_PREDECESSOR_SHA256=$live_updater_before"
+    echo "UPDATE_TIMER_STATE=${update_timer_enabled_before}/${update_timer_active_before}"
+    echo "MONITOR_TIMER_STATE=${monitor_timer_enabled_before}/${monitor_timer_active_before}"
+    if [[ -e /run/reboot-required ]]; then echo 'REBOOT_REQUIRED=yes'; else echo 'REBOOT_REQUIRED=no'; fi
+    echo 'V28_ACTIVATION_PREFLIGHT=PASS'
+    if [[ "$action" == '--preflight' ]]; then release_quiescent_window; echo 'MUTATION_PERFORMED=false'; return 0; fi
+
+    trap on_exit EXIT
+    mutation_started=true
+    state_dir="$(mktemp -d "/root/rpi5-v28-activation-$(date +%Y%m%d-%H%M%S).XXXXXX")"
+    chmod 0700 "$state_dir"
+    cp --preserve=mode,ownership,timestamps "$UPDATER_DEST" "$state_dir/rpi5-update.before"
+    cp --preserve=mode,ownership,timestamps "$COMPOSE_POLICY_DEST" "$state_dir/rpi5-update-compose-policy.before"
+    printf '%s\n' "$live_updater_before" >"$state_dir/rpi5-update.before.sha256"
+    printf '%s\n' "$EXPECTED_V27_COMPOSE_POLICY_SHA256" >"$state_dir/rpi5-update-compose-policy.before.sha256"
+    printf 'absent\n' >"$state_dir/rpi5-update-docker-evidence.before.state"
+
+    atomic_stage_from_release "$COMPOSE_POLICY_REL" "$COMPOSE_POLICY_DEST" 0644 compose_stage || fail 'failed to stage V28 compose-policy beside live target'
+    atomic_stage_from_release "$DOCKER_EVIDENCE_REL" "$DOCKER_EVIDENCE_DEST" 0644 docker_evidence_stage || fail 'failed to stage V28 docker-evidence beside live target'
+    atomic_stage_from_release "$UPDATER_REL" "$UPDATER_DEST" 0750 updater_stage || fail 'failed to stage V28 updater beside live target'
+    [[ "$(sha256_file "$compose_stage")" == "$EXPECTED_V28_COMPOSE_POLICY_SHA256" ]] || fail 'staged compose-policy identity drifted'
+    [[ "$(sha256_file "$docker_evidence_stage")" == "$EXPECTED_V28_DOCKER_EVIDENCE_SHA256" ]] || fail 'staged docker-evidence identity drifted'
+    [[ "$(sha256_file "$updater_stage")" == "$EXPECTED_V28_SHA256" ]] || fail 'staged updater identity drifted'
+    bash -n "$compose_stage"; bash -n "$docker_evidence_stage"; bash -n "$updater_stage"
+
+    atomic_replace_stage "$compose_stage" "$COMPOSE_POLICY_DEST" || fail 'atomic V28 compose-policy replacement failed'; compose_stage=''
+    atomic_replace_stage "$docker_evidence_stage" "$DOCKER_EVIDENCE_DEST" || fail 'atomic V28 docker-evidence installation failed'; docker_evidence_stage=''
+    require_root_file "$COMPOSE_POLICY_DEST" && [[ "$(sha256_file "$COMPOSE_POLICY_DEST")" == "$EXPECTED_V28_COMPOSE_POLICY_SHA256" ]] || fail 'installed V28 compose-policy differs from release'
+    require_root_file "$DOCKER_EVIDENCE_DEST" && [[ "$(sha256_file "$DOCKER_EVIDENCE_DEST")" == "$EXPECTED_V28_DOCKER_EVIDENCE_SHA256" ]] || fail 'installed V28 docker-evidence differs from release'
+
+    release_fd_var QUIESCENT_UPDATE_FD
+    local check_log="$state_dir/v28-check.log"
+    if ! verify_v28_check "$updater_stage" "$check_log" /var/lib/apt/lists; then tail -n 120 "$check_log" >&2 || true; fail 'staged V28 updater --check failed or mutated APT lists'; fi
+
+    lock_rc=0; acquire_quiescent_one updater "$UPDATE_LOCK" QUIESCENT_UPDATE_FD || lock_rc=$?
+    case "$lock_rc" in 0) ;; "$RPI5_LOCK_CONFLICT_RC") fail 'another updater acquired updater-private after staged check; STOP with evidence, no rollback/retry' ;; *) fail "updater-private reacquisition failed rc=$lock_rc" ;; esac
+    [[ "$(sha256_file "$UPDATER_DEST")" == "$live_updater_before" ]] || fail 'live updater changed during staged V28 check'
+    [[ "$(sha256_file "$COMPOSE_POLICY_DEST")" == "$EXPECTED_V28_COMPOSE_POLICY_SHA256" ]] || fail 'compose-policy changed during staged V28 check'
+    [[ "$(sha256_file "$DOCKER_EVIDENCE_DEST")" == "$EXPECTED_V28_DOCKER_EVIDENCE_SHA256" ]] || fail 'docker-evidence changed during staged V28 check'
+
+    atomic_replace_stage "$updater_stage" "$UPDATER_DEST" || fail 'atomic V28 updater replacement failed'; updater_stage=''
+    require_root_file "$UPDATER_DEST" || fail 'installed V28 updater is unsafe'
+    [[ "$(stat -c '%U:%G:%a' "$UPDATER_DEST")" == 'root:root:750' && "$(sha256_file "$UPDATER_DEST")" == "$EXPECTED_V28_SHA256" ]] || fail 'installed V28 updater identity/mode drifted'
+    bash -n "$UPDATER_DEST"
+
+    [[ "$(unit_enabled "$UPDATE_TIMER")" == "$update_timer_enabled_before" && "$(unit_active "$UPDATE_TIMER")" == "$update_timer_active_before" ]] || fail 'update timer state changed'
+    [[ "$(unit_enabled "$MONITOR_TIMER")" == "$monitor_timer_enabled_before" && "$(unit_active "$MONITOR_TIMER")" == "$monitor_timer_active_before" ]] || fail 'monitor timer state changed'
+    local backup_sha_after='missing'; [[ -f "$BACKUP_DEST" && ! -L "$BACKUP_DEST" ]] && backup_sha_after="$(sha256_file "$BACKUP_DEST")"; [[ "$backup_sha_after" == "$backup_sha_before" ]] || fail 'canonical backup bytes changed'
+
+    mutation_started=false
+    release_quiescent_window
+    trap - EXIT
+    echo "V28_EVIDENCE_STATE=$state_dir"
+    echo "V28_UPDATER_SHA256=$(sha256_file "$UPDATER_DEST")"
+    echo "V28_COMPOSE_POLICY_SHA256=$(sha256_file "$COMPOSE_POLICY_DEST")"
+    echo "V28_DOCKER_EVIDENCE_SHA256=$(sha256_file "$DOCKER_EVIDENCE_DEST")"
+    echo 'V28_NON_MUTATING_APT_CHECK=PASS'
+    echo "APT_LISTS_FINGERPRINT_BEFORE=$V28_APT_BEFORE"
+    echo "APT_LISTS_FINGERPRINT_AFTER=$V28_APT_AFTER"
+    echo 'MAINTENANCE_BOUNDARIES_UNCHANGED=PASS'
+    echo 'V28_HOST_ACTIVATION=PASS'
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then main "$@"; fi

@@ -1,12 +1,19 @@
 # Changelog
 
-## Unreleased — V28 release gate
+## Unreleased — V28 production activation gate
+
+- Add a version-specific `0.2.0`/V28 activation operator with explicit read-only `--preflight` and mutation-only `--apply`.
+- Bind activation to tag `0.2.0`, exact release commit, updater/helper SHA/blob identities, public release metadata and exact-release `validate` CI.
+- Limit the planned production delta to the updater plus the reviewed Compose-policy and Docker-evidence helpers; preserve unrelated helper bytes, timer state, backup bytes and reboot state.
+- Fail closed after the first write with preserved before-state and no automatic retry/rollback/cleanup/reboot.
+
+## 0.2.0 — 2026-09-06
 
 - Add deterministic exact-ref release manifest generation for the planned `0.2.0` milestone.
 - Add a read-only RPi5 shadow verifier for candidate identity, Docker/Compose health, systemd state and reboot-required evidence.
 - Keep release publication separate from production activation; no LIVE mutation is part of this gate.
 
-## Unreleased — P1 Docker evidence hardening
+### P1 Docker evidence hardening
 
 - Added run-scoped root-only Docker evidence with structured phase records and exact command exit/output capture.
 - Added immutable Compose container/image state snapshots before and after Docker work.

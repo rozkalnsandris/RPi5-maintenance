@@ -25,6 +25,8 @@ test:
 	bash ./tests/test-maintenance-updater-apt-policy.sh
 	python3 ./tests/test-maintenance-v27-activation.py
 	python3 ./tests/test-maintenance-v27-activation-transaction.py
+	python3 ./tests/test-maintenance-v28-activation.py
+	python3 ./tests/test-maintenance-v28-activation-transaction.py
 	bash ./tests/test-maintenance-updater-provenance.sh
 	bash ./tests/test-maintenance-updater-source.sh
 	python3 ./tests/test-maintenance-updater-source-validator.py
