@@ -1,8 +1,14 @@
 # V28 / 0.2.0 production activation gate
 
+## Status
+
+**Completed and verified on 2026-09-06.** A separate explicit LIVE authorization was used to run the reviewed `--apply` from operator source commit `a0daa87cbd6a34a1f4a49648798c45587cdf43de`. Production now contains the exact V28 updater, Compose-policy and Docker-evidence helper bytes from release `0.2.0`. Release publication itself remained non-authorizing.
+
+The successful activation preserved root-only evidence at `/root/rpi5-v28-activation-20260906-115620.8f7xwf`, reported `V28_HOST_ACTIVATION=PASS`, preserved identical APT-list fingerprints across the staged `--check`, and did not perform APT, Docker, systemd, cleanup or reboot mutation outside the reviewed file-install scope.
+
 ## Purpose
 
-Release `0.2.0` is published but is not production-authorized. The production gate uses a version-specific operator so deployment cannot silently follow moving `main`.
+The production gate uses a version-specific operator so deployment cannot silently follow moving `main` and so release publication remains separate from explicit LIVE activation authorization.
 
 ## Target identity
 

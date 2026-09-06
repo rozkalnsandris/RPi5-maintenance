@@ -6,6 +6,8 @@
 - Bind activation to tag `0.2.0`, exact release commit, updater/helper SHA/blob identities, public release metadata and exact-release `validate` CI.
 - Limit the planned production delta to the updater plus the reviewed Compose-policy and Docker-evidence helpers; preserve unrelated helper bytes, timer state, backup bytes and reboot state.
 - Fail closed after the first write with preserved before-state and no automatic retry/rollback/cleanup/reboot.
+- Production activation completed successfully on 2026-09-06 from reviewed operator source commit `a0daa87cbd6a34a1f4a49648798c45587cdf43de`.
+- Post-activation verification confirmed exact V28 updater/helper hashes, unchanged timer boundaries, healthy main/CV Compose runtime and no reboot-required state.
 
 ## 0.2.0 — 2026-09-06
 
