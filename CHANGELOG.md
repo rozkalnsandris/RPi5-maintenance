@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased — V28 release gate
+
+- Add deterministic exact-ref release manifest generation for the planned `0.2.0` milestone.
+- Add a read-only RPi5 shadow verifier for candidate identity, Docker/Compose health, systemd state and reboot-required evidence.
+- Keep release publication separate from production activation; no LIVE mutation is part of this gate.
+
 ## Unreleased — P1 Docker evidence hardening
 
 - Added run-scoped root-only Docker evidence with structured phase records and exact command exit/output capture.

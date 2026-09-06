@@ -28,6 +28,8 @@ test:
 	bash ./tests/test-maintenance-updater-provenance.sh
 	bash ./tests/test-maintenance-updater-source.sh
 	python3 ./tests/test-maintenance-updater-source-validator.py
+	python3 ./tests/test-maintenance-release-manifest.py
+	python3 ./tests/test-maintenance-shadow-verifier.py
 	python3 ./tests/test-maintenance-updater-telegram.py
 	bash ./tests/test-maintenance-health.sh
 	bash ./tests/test-maintenance-health-entrypoints.sh

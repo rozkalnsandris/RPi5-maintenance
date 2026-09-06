@@ -2,33 +2,42 @@
 
 ## Current state
 
-`rpi5-maintenance` is an independent source repository. The `0.1.0` extraction/parity milestone preserved the reviewed V27 updater lineage from `rozkalnsandris/RPi5_main`; production activation of the independent repository has not been performed.
+`rpi5-maintenance` is the independent maintenance source repository. P1/V28 Docker evidence hardening is merged on `main`. Production still runs the previously installed maintenance implementation; the independent repository has not been activated on the RPi5.
 
-The next source successor is **V28 — Docker evidence hardening**. V28 is derived from the extracted V27 updater and changes evidence/diagnostic behavior, not Docker remediation policy.
+V28 corresponds to the planned `0.2.0` evidence/error-capture milestone. Runtime behavior changes from P1 are complete; the current lane is **immutable release metadata + read-only shadow-verification tooling**.
 
-## P1 evidence contract
+## Current lane
 
-P1 now has an executable sanitized regression for the 2026-09-06 incident and source support for:
+Prepare the source-level release gate without publishing a release or mutating production:
 
-- run-scoped root-only Docker evidence;
-- exact Docker command output and exit-code capture;
-- structured `phases.jsonl` records;
-- explicit pull / target-selection / reconcile / readiness / rollback phase evidence;
-- explicit target-selection reason + affected service;
-- immutable image/container state snapshots;
-- independent final Compose health evidence;
-- actionable failure detail in the final Docker summary.
+- deterministic release manifest from an exact Git ref;
+- exact updater/provenance identity validation;
+- explicit `production_activation_authorized=false` metadata;
+- read-only host shadow verifier for Docker daemon, main/CV Compose completeness/runtime health, systemd state and reboot-required state;
+- CI tests enforcing that the shadow verifier contains no mutation path.
 
-The preserved host evidence shows that the 2026-09-06 APT transaction upgraded Docker components and restarted Docker, `mosquitto` remained stopped through the main Docker phase, candidate pulls completed, and V27 then emitted only a generic main failure. A stopped registry-backed service deterministically reproduces a V27 post-pull target-selection `rc=2` path. Because V27 did not retain a structured post-pull record, that reconstruction is evidence-backed but is not presented as proof of the exact historical return statement.
+## Current read-only shadow evidence
+
+The 2026-09-06 post-P1 shadow preflight from the source checkout showed:
+
+- V28 candidate provenance matches tracked source;
+- Docker daemon available;
+- main Compose: all expected services present, no bad containers;
+- CV Compose: all expected services present, no bad containers;
+- `rpi5-update.timer` active;
+- `/run/reboot-required` absent;
+- historical `rpi5-update.service` remains in sticky `failed` state from the prior maintenance incident;
+- installed updater SHA was not readable with the non-root shadow execution and must be captured during the later authorized/exact release preflight if required.
+
+Do not clear the failed unit merely to make shadow output green; current runtime health and historical run state are separate evidence.
 
 ## Current gate
 
-1. Prove V28 with `make validate` and exact-head CI.
-2. Review the P1 diff and failure evidence contract; do not add automatic remediation in this gate.
+1. Prove release/shadow tooling with `make validate` and exact-head CI.
+2. Review that the shadow verifier is read-only and release manifest is exact-ref/provenance bound.
 3. Merge requires explicit owner authorization.
-4. After merge, prepare immutable release/shadow-verification evidence before any production activation.
-5. Production install/cutover remains a separate explicit LIVE authorization bound to an exact reviewed release/commit.
+4. After merge, generate manifest from the exact merged commit and request explicit owner authorization before creating the immutable `0.2.0` tag/GitHub release.
+5. Publishing the release does not authorize production installation.
+6. Production install/cutover requires a separate explicit LIVE authorization bound to the exact reviewed release/commit.
 
-## Production boundary
-
-No P1 source work authorizes package changes, Docker mutation, systemd changes, maintenance execution, deployment or reboot on the RPi5. Read-only host evidence may be gathered as needed. P2 transaction classification/continuation policy and P3 doctor/backoff remain later work.
+P2 transaction classification/continuation and P3 doctor/backoff remain later work; do not mix them into this release gate.

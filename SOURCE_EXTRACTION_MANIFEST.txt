@@ -66,3 +66,7 @@ tests/test-maintenance-updater-status.sh
 tests/test-maintenance-updater-telegram.py
 tests/test-maintenance-v27-activation-transaction.py
 tests/test-maintenance-v27-activation.py
+scripts/build-release-manifest.py
+scripts/rpi5-maintenance-shadow-verify.py
+tests/test-maintenance-release-manifest.py
+tests/test-maintenance-shadow-verifier.py
