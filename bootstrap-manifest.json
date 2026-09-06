@@ -1,5 +1,5 @@
 {
-  "repository": "rozkalnsandris/rpi5-maintenance",
+  "repository": "rozkalnsandris/RPi5-maintenance",
   "visibility_target": "public",
   "default_branch_target": "main",
   "source": {
@@ -14,6 +14,8 @@
       "docs/V25_SHARED_MAINTENANCE_LOCK_CONTRACT.md",
       "docs/V26_MAINTENANCE_APT_CHECK_CONTRACT.md",
       "ops/bin/rpi5-update",
+      "ops/bin/rpi5-backup",
+      "ops/bin/rpi5-backup-serialized",
       "ops/bin/rpi5-maintenance-compose-policy-activate",
       "ops/bin/rpi5-maintenance-lock-cutover",
       "ops/bin/rpi5-maintenance-notify",
