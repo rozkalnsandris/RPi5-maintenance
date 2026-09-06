@@ -2,63 +2,73 @@
 
 ## Current state
 
-`rpi5-maintenance` is the independent maintenance source repository. P1/V28 Docker evidence hardening and the release/shadow gate are merged on `main`. GitHub release/tag **`0.2.0`** is published and resolves to exact commit `7a5685908e06cc35aa4bb623dd9fa6a3081c4416` (tree `3e6ef8913b64a48d5eb3ba90f13c74c5a7083d67`). Production has **not** been activated from this release.
+`rpi5-maintenance` is the independent maintenance source repository. P1/V28 Docker evidence hardening, the release/shadow gate and the V28 production-activation operator are merged on `main`.
 
-The current lane is **V28 / `0.2.0` production-activation contract**. This lane prepares a reviewed, exact-release-bound operator; it does not itself authorize or perform production mutation.
+GitHub release/tag **`0.2.0`** remains bound to exact release commit `7a5685908e06cc35aa4bb623dd9fa6a3081c4416` (tree `3e6ef8913b64a48d5eb3ba90f13c74c5a7083d67`). The separately authorized production activation completed successfully on 2026-09-06 using the reviewed operator from `main` commit `a0daa87cbd6a34a1f4a49648798c45587cdf43de`.
 
-## Exact release identity
+Production now runs the exact V28 updater/helper identities from release `0.2.0`. Release publication itself did not authorize production; the one-time LIVE activation authorization was consumed by the successful `--apply`.
 
-- tag/version: `0.2.0`;
+## Exact production identity
+
+- release/tag: `0.2.0`;
 - release commit: `7a5685908e06cc35aa4bb623dd9fa6a3081c4416`;
-- updater SHA256: `3a7898c1f06f7bd5b4136dd6875edf5c7178dad9c8ea4099ef065ce9b1c20882`;
-- updater Git blob: `1b647c26ba91d75aad29cf50ddc8d33a21c5e9c2`;
-- V28 Compose-policy SHA256: `5ee19cbf09f5fa06853d1c121fea8216e1ae245aaa17af81e2affe6ab3aaae4f`;
-- V28 Docker-evidence helper SHA256: `f133adb38eb5499e1e582532f142f1b892ba99755262ce0612d8b21e96716456`;
+- activation operator source commit: `a0daa87cbd6a34a1f4a49648798c45587cdf43de`;
+- activation operator SHA256: `0384eb3b544883a1e979c7711cde351cd5597c28819054d07406e2bf770f959a`;
+- activation operator Git blob: `be0473e43d37271096a0461df2780f9e62effb67`;
+- `/usr/local/sbin/rpi5-update` SHA256: `3a7898c1f06f7bd5b4136dd6875edf5c7178dad9c8ea4099ef065ce9b1c20882`, owner/mode `root:root 0750`;
+- `rpi5-update-compose-policy.sh` SHA256: `5ee19cbf09f5fa06853d1c121fea8216e1ae245aaa17af81e2affe6ab3aaae4f`, owner/mode `root:root 0644`;
+- `rpi5-update-docker-evidence.sh` SHA256: `f133adb38eb5499e1e582532f142f1b892ba99755262ce0612d8b21e96716456`, owner/mode `root:root 0644`;
 - exact release-commit `validate` push CI run `34023964012`: SUCCESS;
-- release metadata records `production_activation_authorized=false`.
+- activation-operator merged-main `validate` push CI run `34025290660`: SUCCESS.
 
-## Current read-only production evidence
+## Activation evidence
 
-Minimum activation-scope evidence from the live RPi5:
+The authorized root `--apply` completed with:
 
-- `/usr/local/sbin/rpi5-update`: `root:root`, mode `0750`, size `46805`; exact SHA is not readable to the non-root remote session and must be verified by the root activation preflight before any write;
-- all V28 runtime helpers already match release `0.2.0` except the intended activation delta:
-  - live `rpi5-update-compose-policy.sh` SHA256 `bc11a4f487efd791e23dc48f325e1aa396da14b67fc6e7429e300545ce954516`, which matches the reviewed pre-P1/V27 repository source;
-  - live `rpi5-update-docker-evidence.sh` is absent, as expected for the V27 predecessor;
-- `rpi5-update.timer`: active;
-- `rpi5-monitor.timer`: active;
-- `docker.service`: active;
-- `rpi5-update.service`: sticky `failed` from the 2026-09-06 incident and must not be cleared merely for cosmetic state;
-- no active matching maintenance locks were visible in `lslocks`; lock files exist and are root-owned;
-- `/run/reboot-required`: absent.
+- `V28_ACTIVATION_PREFLIGHT=PASS`;
+- predecessor updater SHA256 `f9c83acdd72131d6b696900972aa11d24978645b931846ff4ea8e6a8ed80bdc2`;
+- `V28_HOST_ACTIVATION=PASS`;
+- `V28_NON_MUTATING_APT_CHECK=PASS`;
+- identical APT-list fingerprints before/after the staged check: `37c0274e1f63e4680336e4a7b96279b74ddde31b4e859e77f1a08de49c860d04`;
+- `MAINTENANCE_BOUNDARIES_UNCHANGED=PASS`;
+- root-only evidence directory `/root/rpi5-v28-activation-20260906-115620.8f7xwf` preserved and present.
 
-The existing GitHub App read-token broker did not return a token for the new repository. Because this repository/release is public, the V28 activation operator deliberately avoids a new credential/configuration dependency and verifies remote `main`/tag with read-only `git ls-remote` plus the public GitHub Release/Actions APIs.
+No APT mutation, Docker mutation, systemd mutation, cleanup or reboot was part of this activation.
 
-## Activation operator contract
+## Fresh post-activation runtime evidence
 
-`ops/bin/rpi5-maintenance-v28-activate` is version-specific and must remain bound to release `0.2.0`.
+Read-only verification after activation showed:
 
-- `--preflight` performs release/source/live-state/CI/lock checks and must not write production state;
-- `--apply` is the only mutation mode;
-- preflight accepts only the exact reviewed V27 updater predecessor or an already-current exact V28 installation;
-- unchanged runtime helpers must byte-match release `0.2.0`;
-- planned mutation scope is only:
-  1. `rpi5-update-compose-policy.sh` -> V28 release bytes;
-  2. add `rpi5-update-docker-evidence.sh` -> V28 release bytes;
-  3. `/usr/local/sbin/rpi5-update` -> V28 release bytes;
-- before-state is preserved under a root-only activation evidence directory;
-- staged V28 `--check` must preserve APT-list fingerprints before updater replacement;
-- timer state, unrelated helper bytes and backup bytes must remain unchanged;
-- no systemd start/stop/restart/reset-failed/daemon-reload, Docker mutation, APT mutation, cleanup or reboot is part of activation;
-- after the first write, any failure is fail-closed: preserve evidence and STOP with no automatic retry, rollback, cleanup, reboot or alternate mutation.
+- source checkout clean on exact current `main` `a0daa87cbd6a34a1f4a49648798c45587cdf43de`;
+- the three production file hashes above match exact V28 release identities;
+- `rpi5-update.timer`: `enabled/active`;
+- `rpi5-monitor.timer`: `enabled/active`;
+- `docker.service`: `active`;
+- main Compose: no bad containers;
+- CV Compose: no bad containers;
+- no active matching maintenance locks observed;
+- `/run/reboot-required`: absent;
+- historical `rpi5-update.service=failed` remains intentionally uncleared from the 2026-09-06 pre-V28 incident and is not evidence of activation failure.
 
-## Current gate
+## Current lane — post-cutover stability proof
 
-1. Prove the V28 activation operator and transaction contract with `make validate` and exact-head CI.
-2. Review exact release/source bindings and planned live delta.
-3. Merge requires explicit owner authorization.
-4. After merge, perform a fresh **root read-only `--preflight`** against exact current `main` + release `0.2.0`; this does not consume LIVE authorization.
-5. Only after successful preflight may an explicit LIVE authorization bind the exact operator source identity + release `0.2.0` and permit `--apply`.
-6. Reboot is not part of this activation scope unless separately authorized.
+The immediate lane is **read-only post-cutover stability proof**. Do not start P2/P3 behavior changes or remove duplicated maintenance source from `RPi5_main` inside this lane.
 
-P2 transaction classification/continuation and P3 doctor/backoff remain later work; do not mix them into this activation gate.
+The purpose is to prove the installed `0.2.0` control-plane remains stable under normal scheduled operation before migration cleanup. The already reviewed and installed scheduled maintenance policy may execute its exact existing timer-defined scope without a new ChatGPT authorization for each timer run.
+
+Current gate:
+
+1. Preserve the exact production identity above as the cutover baseline.
+2. Do not manually run maintenance merely to manufacture stability evidence; a manual run would require a new LIVE authorization.
+3. After the next normal scheduled maintenance run, collect minimum read-only evidence for:
+   - updater run result and exit status;
+   - V28 run-scoped Docker evidence presence/shape when Docker phases execute;
+   - main/CV Compose runtime health;
+   - relevant local/public health gates if the run touched them;
+   - timer/service state;
+   - reboot-required/result state;
+   - any failure-domain behavior actually exercised.
+4. If the scheduled run is healthy, record stable-production proof in canonical continuity.
+5. Only after stable operation may Phase 9 removal of duplicated maintenance source from `RPi5_main` be considered.
+
+P2 transaction classification/continuation and P3 doctor/backoff remain separate later behavior milestones and require their own scoped work items.
