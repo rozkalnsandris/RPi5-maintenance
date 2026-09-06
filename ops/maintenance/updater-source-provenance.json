@@ -76,17 +76,31 @@
       "size_bytes": 51089,
       "helper_root": "/usr/local/lib/rpi5-maintenance",
       "evidence": "RPi5_main issue #138 / Draft PR #152 exact GitHub-stored source identity"
+    },
+    {
+      "stage": "v27-hermes-manual-update-check-only-public-safe",
+      "date": "2026-08-23",
+      "sha256": "f9c83acdd72131d6b696900972aa11d24978645b931846ff4ea8e6a8ed80bdc2",
+      "git_blob_sha1": "744192e2acb7105d90a93e1cf3426433c09cb26d",
+      "size_bytes": 46805,
+      "helper_root": "/usr/local/lib/rpi5-maintenance",
+      "evidence": "RPi5_main issue #217 / maintenance/hermes-manual-notify-only-20260823 exact GitHub-stored source identity",
+      "properties": [
+        "Hermes update remains manual/advisory-only",
+        "shared maintenance lock and cached APT check preserved",
+        "extracted as the 0.1.0 parity updater baseline"
+      ]
     }
   ],
   "candidate": {
-    "stage": "v27-hermes-manual-update-check-only-public-safe",
+    "stage": "v28-docker-evidence-hardening-public-safe",
     "path": "ops/bin/rpi5-update",
-    "sha256": "f9c83acdd72131d6b696900972aa11d24978645b931846ff4ea8e6a8ed80bdc2",
-    "git_blob_sha1": "744192e2acb7105d90a93e1cf3426433c09cb26d",
-    "size_bytes": 46805,
+    "sha256": "3a7898c1f06f7bd5b4136dd6875edf5c7178dad9c8ea4099ef065ce9b1c20882",
+    "git_blob_sha1": "1b647c26ba91d75aad29cf50ddc8d33a21c5e9c2",
+    "size_bytes": 56299,
     "helper_root": "/usr/local/lib/rpi5-maintenance",
-    "derived_from_sha256": "df1b41f128cee6b014ad0ff43a5365699a055ff99ff26e2ad5dba6f5f60fc19e",
-    "evidence": "RPi5_main issue #217 / maintenance/hermes-manual-notify-only-20260823 exact GitHub-stored source identity",
+    "derived_from_sha256": "f9c83acdd72131d6b696900972aa11d24978645b931846ff4ea8e6a8ed80bdc2",
+    "evidence": "RPi5-maintenance P1 evidence-hardening source candidate derived from the extracted V27 parity baseline",
     "public_runtime_literals_removed": true,
     "cleanup_home_scan_removed": true,
     "cleanup_only_compose_preflight_removed": true,
@@ -103,7 +117,14 @@
     "hermes_update_check_only": true,
     "hermes_update_check_after_health": true,
     "hermes_update_check_advisory": true,
-    "hermes_update_check_blocks_reboot": false
+    "hermes_update_check_blocks_reboot": false,
+    "docker_run_scoped_evidence": true,
+    "docker_command_output_capture": true,
+    "docker_structured_phase_records": true,
+    "docker_container_state_snapshots": true,
+    "docker_target_selection_reason": true,
+    "docker_final_health_evidence": true,
+    "docker_remediation_policy_changed": false
   },
   "backup_ownership_snapshot": {
     "label": "V10 ownership snapshot",

@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased — P1 Docker evidence hardening
+
+- Added run-scoped root-only Docker evidence with structured phase records and exact command exit/output capture.
+- Added immutable Compose container/image state snapshots before and after Docker work.
+- Added explicit target-selection failure reasons, including stopped/missing running containers.
+- Added the sanitized executable 2026-09-06 Docker-daemon-restart regression fixture.
+- Corrected the incident record to distinguish observed facts from the reconstructed post-pull failure path.
+- Preserved existing Docker update/rollback policy; no new automatic remediation or production activation is included.
+
 ## 0.1.0 — 2026-09-06
 
 Extraction/parity milestone.

@@ -57,16 +57,22 @@ assert v26["git_blob_sha1"] == "595b4752e1f40a961230daab188187bf79e63be8"
 assert v26["size_bytes"] == 51089
 assert v26["helper_root"] == "/usr/local/lib/rpi5-maintenance"
 
+v27 = by_stage["v27-hermes-manual-update-check-only-public-safe"]
+assert v27["sha256"] == "f9c83acdd72131d6b696900972aa11d24978645b931846ff4ea8e6a8ed80bdc2"
+assert v27["git_blob_sha1"] == "744192e2acb7105d90a93e1cf3426433c09cb26d"
+assert v27["size_bytes"] == 46805
+assert v27["helper_root"] == "/usr/local/lib/rpi5-maintenance"
+
 candidate = data["candidate"]
-assert candidate["stage"] == "v27-hermes-manual-update-check-only-public-safe"
+assert candidate["stage"] == "v28-docker-evidence-hardening-public-safe"
 assert candidate["path"] == "ops/bin/rpi5-update"
-assert candidate["sha256"] == "f9c83acdd72131d6b696900972aa11d24978645b931846ff4ea8e6a8ed80bdc2"
-assert candidate["git_blob_sha1"] == "744192e2acb7105d90a93e1cf3426433c09cb26d"
-assert candidate["size_bytes"] == 46805
+assert candidate["sha256"] == "3a7898c1f06f7bd5b4136dd6875edf5c7178dad9c8ea4099ef065ce9b1c20882"
+assert candidate["git_blob_sha1"] == "1b647c26ba91d75aad29cf50ddc8d33a21c5e9c2"
+assert candidate["size_bytes"] == 56299
 assert re.fullmatch(r"[0-9a-f]{64}", candidate["sha256"])
 assert re.fullmatch(r"[0-9a-f]{40}", candidate["git_blob_sha1"])
 assert candidate["helper_root"] == "/usr/local/lib/rpi5-maintenance"
-assert candidate["derived_from_sha256"] == v26["sha256"]
+assert candidate["derived_from_sha256"] == v27["sha256"]
 
 actual_sha256 = hashlib.sha256(source_bytes).hexdigest()
 blob_header = f"blob {len(source_bytes)}\0".encode("ascii")
@@ -92,6 +98,13 @@ assert candidate["hermes_update_check_only"] is True
 assert candidate["hermes_update_check_after_health"] is True
 assert candidate["hermes_update_check_advisory"] is True
 assert candidate["hermes_update_check_blocks_reboot"] is False
+assert candidate["docker_run_scoped_evidence"] is True
+assert candidate["docker_command_output_capture"] is True
+assert candidate["docker_structured_phase_records"] is True
+assert candidate["docker_container_state_snapshots"] is True
+assert candidate["docker_target_selection_reason"] is True
+assert candidate["docker_final_health_evidence"] is True
+assert candidate["docker_remediation_policy_changed"] is False
 
 backup = data["backup_ownership_snapshot"]
 assert backup["label"] == "V10 ownership snapshot"

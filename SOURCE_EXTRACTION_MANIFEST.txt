@@ -21,6 +21,7 @@ ops/lib/rpi5-update-apt-policy.sh
 ops/lib/rpi5-update-cleanup-policy.sh
 ops/lib/rpi5-update-compose-health.sh
 ops/lib/rpi5-update-compose-policy.sh
+ops/lib/rpi5-update-docker-evidence.sh
 ops/lib/rpi5-update-hermes-status.sh
 ops/lib/rpi5-update-http-health.sh
 ops/lib/rpi5-update-locks.sh
@@ -51,6 +52,8 @@ tests/test-maintenance-telegram-credentials.py
 tests/test-maintenance-updater-apt-policy.sh
 tests/test-maintenance-updater-compose-health.sh
 tests/test-maintenance-updater-compose-policy.sh
+tests/test-maintenance-updater-docker-evidence.sh
+tests/fixtures/docker-maintenance-2026-09-06.env
 tests/test-maintenance-updater-http-health.sh
 tests/test-maintenance-updater-locks.sh
 tests/test-maintenance-updater-origin-policy.sh

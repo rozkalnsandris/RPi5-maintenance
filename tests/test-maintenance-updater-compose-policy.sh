@@ -155,6 +155,8 @@ else
 fi
 [[ "$rc" -eq 3 ]]
 [[ "$RPI5_COMPOSE_CONFIG_DRIFT_SERVICE" == 'cv' ]]
+[[ "$RPI5_COMPOSE_SELECTION_FAILURE_REASON" == 'config-drift' ]]
+[[ "$RPI5_COMPOSE_SELECTION_FAILURE_SERVICE" == 'cv' ]]
 
 # Lock the real updater call shape: update_compose_project owns local
 # project_dir and calls the policy with two arguments. Bash dynamic scoping then
