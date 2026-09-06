@@ -3,6 +3,7 @@ name: validate
 on:
   push:
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -22,9 +23,4 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [[ -f ops/bin/rpi5-update ]]; then
-            make validate
-          else
-            make bootstrap-check
-            echo 'Bootstrap stage: canonical source extraction not committed yet.'
-          fi
+          make validate
