@@ -1,4 +1,4 @@
-# bootstrap revision: 3
+# bootstrap revision: 4
 name: bootstrap-extract-maintenance-source
 
 on:
@@ -95,12 +95,7 @@ jobs:
         run: |
           set -euo pipefail
           cd target
-          while IFS= read -r rel; do
-            case "$rel" in
-              tests/test-maintenance-*.sh) bash "$rel" ;;
-              tests/test-maintenance-*.py) python3 "$rel" ;;
-            esac
-          done < SOURCE_EXTRACTION_MANIFEST.txt
+          make test
 
       - name: Finalize import, remove bootstrap writer, and push
         shell: bash
