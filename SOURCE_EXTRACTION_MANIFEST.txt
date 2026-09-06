@@ -70,3 +70,6 @@ scripts/build-release-manifest.py
 scripts/rpi5-maintenance-shadow-verify.py
 tests/test-maintenance-release-manifest.py
 tests/test-maintenance-shadow-verifier.py
+ops/bin/rpi5-maintenance-v28-activate
+tests/test-maintenance-v28-activation.py
+tests/test-maintenance-v28-activation-transaction.py
