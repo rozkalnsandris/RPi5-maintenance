@@ -17,6 +17,7 @@ test:
 	bash ./tests/test-maintenance-updater-reboot.sh
 	bash ./tests/test-maintenance-updater-compose-health.sh
 	bash ./tests/test-maintenance-updater-compose-policy.sh
+	bash ./tests/test-maintenance-updater-docker-evidence.sh
 	python3 ./tests/test-maintenance-compose-policy-activation.py
 	bash ./tests/test-maintenance-updater-space-policy.sh
 	bash ./tests/test-maintenance-updater-origin-policy.sh

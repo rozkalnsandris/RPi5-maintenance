@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # RPi5 drošs nedēļas atjaunināšanas skripts
-# Versija: 27
+# Versija: 28
 #
 # Noklusējuma palaišana (reāls update):
 #   sudo /usr/local/sbin/rpi5-update
@@ -52,6 +52,7 @@ export COMPOSE_PROGRESS=plain
 
 readonly CONFIG_FILE="/etc/rpi-update.conf"
 readonly LOG="/var/log/rpi5-update.log"
+readonly EVIDENCE_ROOT="/var/log/rpi5-maintenance"
 readonly LOCK_FILE="/run/lock/rpi5-update.lock"
 readonly MAINTENANCE_LOCK_FILE="/run/lock/rpi5-maintenance-exclusive.lock"
 readonly LIBEXEC_DIR="/usr/local/lib/rpi5-maintenance"
@@ -115,6 +116,7 @@ for helper in \
     rpi5-update-reboot.sh \
     rpi5-update-compose-health.sh \
     rpi5-update-compose-policy.sh \
+    rpi5-update-docker-evidence.sh \
     rpi5-update-space-policy.sh \
     rpi5-update-origin-policy.sh \
     rpi5-update-http-health.sh \
@@ -182,6 +184,14 @@ exec > >(tee -a "$LOG") 2>&1
 RUN_ID="$(date +'%Y%m%d_%H%M%S')"
 START_EPOCH="$(date +%s)"
 TMP_DIR="$(mktemp -d "/tmp/rpi5-update-${RUN_ID}.XXXXXX")"
+EVIDENCE_DIR=""
+EVIDENCE_PHASES=""
+if [[ "$MODE" == "run" ]]; then
+    EVIDENCE_DIR="${EVIDENCE_ROOT}/${RUN_ID}"
+    EVIDENCE_PHASES="${EVIDENCE_DIR}/phases.jsonl"
+    install -d -o root -g root -m 0700 "$EVIDENCE_DIR"
+    install -o root -g root -m 0600 /dev/null "$EVIDENCE_PHASES"
+fi
 FAILURE_SENT=0
 FINAL_SENT=0
 CURRENT_PHASE="initializācija"
@@ -189,6 +199,11 @@ CURRENT_PHASE="initializācija"
 declare -a SUMMARY_LINES=()
 declare -a WARNINGS=()
 declare -a UPDATED_IMAGES=()
+declare -A DOCKER_FAILURE_PHASE=()
+declare -A DOCKER_FAILURE_REASON=()
+declare -A DOCKER_FAILURE_SERVICE=()
+declare -A DOCKER_LAST_MUTATION=()
+declare -A DOCKER_FINAL_HEALTH=()
 
 APT_STATUS=0
 RCLONE_STATUS=0
@@ -211,6 +226,47 @@ RCLONE_AFTER=""
 
 log() {
     printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"
+}
+
+record_docker_evidence() {
+    local project="$1" phase="$2" command_id="$3" outcome="$4" rc="$5"
+    local mutation="$6" reason="${7:-none}" service="${8:-none}"
+    local started_epoch="${9:-0}" ended_epoch="${10:-0}" line
+
+    line="$(rpi5_docker_evidence_line \
+        "$RUN_ID" "$project" "$phase" "$command_id" "$outcome" "$rc" \
+        "$mutation" "$reason" "$service" "$started_epoch" "$ended_epoch")" || return 1
+
+    if [[ -n "$EVIDENCE_PHASES" ]]; then
+        printf '%s\n' "$line" >>"$EVIDENCE_PHASES"
+    fi
+
+    DOCKER_LAST_MUTATION["$project"]="$mutation"
+    if [[ "$outcome" == "failed" && -z "${DOCKER_FAILURE_PHASE[$project]:-}" ]]; then
+        DOCKER_FAILURE_PHASE["$project"]="$phase"
+        DOCKER_FAILURE_REASON["$project"]="$reason"
+        DOCKER_FAILURE_SERVICE["$project"]="$service"
+    fi
+
+    log "Docker evidence: project=${project} phase=${phase} outcome=${outcome} rc=${rc} mutation=${mutation} reason=${reason} service=${service} evidence=${EVIDENCE_DIR:-$LOG}"
+}
+
+docker_summary_line() {
+    local project="$1" status="$2" icon phase reason service mutation health evidence_id
+    icon="$(status_icon "$status")"
+    if [[ "$status" -eq 0 ]]; then
+        printf '%s' "$icon"
+        return 0
+    fi
+
+    phase="${DOCKER_FAILURE_PHASE[$project]:-unknown}"
+    reason="${DOCKER_FAILURE_REASON[$project]:-unknown}"
+    service="${DOCKER_FAILURE_SERVICE[$project]:-none}"
+    mutation="${DOCKER_LAST_MUTATION[$project]:-unknown}"
+    health="${DOCKER_FINAL_HEALTH[$project]:-unknown}"
+    evidence_id="${RUN_ID}"
+    printf '%s (phase=%s; reason=%s; service=%s; mutation=%s; final-health=%s; evidence=%s)' \
+        "$icon" "$phase" "$reason" "$service" "$mutation" "$health" "$evidence_id"
 }
 
 status_icon() {
@@ -433,7 +489,7 @@ require_command() {
 }
 
 CURRENT_PHASE="priekšpārbaude"
-log "===== RPi5 UPDATE v27 SĀKTS (mode=${MODE}, run_id=${RUN_ID}) ====="
+log "===== RPi5 UPDATE v28 SĀKTS (mode=${MODE}, run_id=${RUN_ID}) ====="
 
 for command_name in \
     apt-get dpkg dpkg-query apt-mark python3 curl flock runuser \
@@ -1151,49 +1207,109 @@ collect_image_changes() {
 update_compose_project() {
     local project_name="$1"
     local project_dir="$2"
-    local before_file="${TMP_DIR}/${project_name}-before.tsv"
-    local pulled_file="${TMP_DIR}/${project_name}-pulled.tsv"
-    local rollback_ok=0
+    local evidence_base="${EVIDENCE_DIR:-$TMP_DIR}"
+    local before_file="${evidence_base}/docker-${project_name}-images-before.tsv"
+    local pulled_file="${evidence_base}/docker-${project_name}-images-after-pull.tsv"
+    local state_before_file="${evidence_base}/docker-${project_name}-state-before.tsv"
+    local state_after_file="${evidence_base}/docker-${project_name}-state-after.tsv"
+    local pull_log="${evidence_base}/docker-${project_name}-pull.log"
+    local up_log="${evidence_base}/docker-${project_name}-up.log"
+    local rollback_log="${evidence_base}/docker-${project_name}-rollback.log"
+    local rollback_ok=0 phase_start phase_end pull_rc selection_rc up_rc rollback_rc
+    local mutation reason service runtime_mutation
 
     log "----- Docker Compose: ${project_name} -----"
     validate_compose_project "$project_name" "$project_dir" || return 2
     snapshot_images "$project_dir" "$before_file" || return 2
+    rpi5_snapshot_compose_state "$project_dir" "$state_before_file" || {
+        log "KĻŪDA: ${project_name} container state snapshot pirms Docker darbībām neizdevās."
+        return 2
+    }
 
     if [[ "$MODE" == "check" ]]; then
         log "${project_name}: --check režīmā image netiek vilkti un konteineri netiek recreatēti."
         return 0
     fi
 
-    (
-        cd "$project_dir"
-        timeout \
-            --foreground \
-            --kill-after=60s \
-            "$DOCKER_PULL_TIMEOUT" \
-            docker compose pull --ignore-buildable
-    ) || {
-        log "KĻŪDA: ${project_name} docker compose pull neizdevās."
+    phase_start="$(date +%s)"
+    pull_rc=0
+    rpi5_capture_command_evidence \
+        "$pull_log" "$project_dir" \
+        timeout --foreground --kill-after=60s "$DOCKER_PULL_TIMEOUT" \
+        docker compose pull --ignore-buildable || pull_rc=$?
+    phase_end="$(date +%s)"
+
+    if [[ "$pull_rc" -ne 0 ]]; then
+        mutation='unknown'
+        if snapshot_images "$project_dir" "$pulled_file"; then
+            mutation="$(rpi5_docker_snapshot_mutation_state "$before_file" "$pulled_file")"
+        fi
+        rpi5_snapshot_compose_state "$project_dir" "$state_after_file" || true
+        reason="$(rpi5_docker_failure_reason_from_log "$pull_log" "$pull_rc" 'pull-command-failed')"
+        record_docker_evidence "$project_name" pull compose-pull failed "$pull_rc" \
+            "$mutation" "$reason" none "$phase_start" "$phase_end"
+        log "KĻŪDA: ${project_name} docker compose pull neizdevās (rc=${pull_rc}, reason=${reason})."
         restore_image_tags "$before_file" || true
         return 1
-    }
+    fi
 
     snapshot_images "$project_dir" "$pulled_file" || {
+        phase_end="$(date +%s)"
+        rpi5_snapshot_compose_state "$project_dir" "$state_after_file" || true
+        record_docker_evidence "$project_name" post-pull-snapshot image-snapshot failed 2 \
+            unknown snapshot-failed none "$phase_start" "$phase_end"
         log "KĻŪDA: ${project_name} image snapshot pēc pull neizdevās."
         restore_image_tags "$before_file" || true
         return 2
     }
+    mutation="$(rpi5_docker_snapshot_mutation_state "$before_file" "$pulled_file")"
+    record_docker_evidence "$project_name" pull compose-pull succeeded 0 \
+        "$mutation" none none "$phase_start" "$phase_end"
 
-    rpi5_build_compose_up_args "$COMPOSE_WAIT_TIMEOUT" false || return 2
-    if (
-        cd "$project_dir"
-        docker compose up "${RPI5_COMPOSE_UP_ARGS[@]}"
-    ); then
+    phase_start="$(date +%s)"
+    selection_rc=0
+    rpi5_build_compose_up_args "$COMPOSE_WAIT_TIMEOUT" false || selection_rc=$?
+    phase_end="$(date +%s)"
+    if [[ "$selection_rc" -ne 0 ]]; then
+        reason="${RPI5_COMPOSE_SELECTION_FAILURE_REASON:-target-selection-failed}"
+        service="${RPI5_COMPOSE_SELECTION_FAILURE_SERVICE:-none}"
+        rpi5_snapshot_compose_state "$project_dir" "$state_after_file" || true
+        record_docker_evidence "$project_name" target-selection compose-target-selection failed \
+            "$selection_rc" "$mutation" "$reason" "$service" "$phase_start" "$phase_end"
+        log "KĻŪDA: ${project_name} Compose target selection neizdevās (rc=${selection_rc}, reason=${reason}, service=${service})."
+        return 2
+    fi
+    record_docker_evidence "$project_name" target-selection compose-target-selection succeeded 0 \
+        "$mutation" none none "$phase_start" "$phase_end"
+
+    phase_start="$(date +%s)"
+    up_rc=0
+    rpi5_capture_command_evidence "$up_log" "$project_dir" \
+        docker compose up "${RPI5_COMPOSE_UP_ARGS[@]}" || up_rc=$?
+    phase_end="$(date +%s)"
+
+    if [[ "$up_rc" -eq 0 ]]; then
+        if [[ "$RPI5_COMPOSE_UPDATE_MODE" == 'changed-registry-images' ]]; then
+            runtime_mutation='changed'
+        else
+            runtime_mutation='none'
+        fi
+        rpi5_snapshot_compose_state "$project_dir" "$state_after_file" || true
         if check_project_runtime "$project_name" "$project_dir"; then
+            record_docker_evidence "$project_name" reconcile compose-up succeeded 0 \
+                "$runtime_mutation" none none "$phase_start" "$phase_end"
             collect_image_changes "$project_name" "$before_file" "$pulled_file"
             return 0
         fi
 
+        record_docker_evidence "$project_name" readiness compose-runtime-check failed 1 \
+            "$runtime_mutation" runtime-unhealthy none "$phase_start" "$phase_end"
         log "KĻŪDA: ${project_name} runtime pārbaude pēc compose up neizdevās."
+    else
+        rpi5_snapshot_compose_state "$project_dir" "$state_after_file" || true
+        reason="$(rpi5_docker_failure_reason_from_log "$up_log" "$up_rc" 'compose-up-command-failed')"
+        record_docker_evidence "$project_name" reconcile compose-up failed "$up_rc" \
+            unknown "$reason" none "$phase_start" "$phase_end"
     fi
 
     log "KĻŪDA: ${project_name} jaunais stack nekļuva running/healthy."
@@ -1201,23 +1317,73 @@ update_compose_project() {
 
     restore_image_tags "$before_file"
 
-    rpi5_build_compose_up_args "$COMPOSE_WAIT_TIMEOUT" true || return 2
-    if (
-        cd "$project_dir"
-        docker compose up "${RPI5_COMPOSE_UP_ARGS[@]}"
-    ); then
+    phase_start="$(date +%s)"
+    selection_rc=0
+    rpi5_build_compose_up_args "$COMPOSE_WAIT_TIMEOUT" true || selection_rc=$?
+    phase_end="$(date +%s)"
+    if [[ "$selection_rc" -ne 0 ]]; then
+        reason="${RPI5_COMPOSE_SELECTION_FAILURE_REASON:-rollback-target-selection-failed}"
+        service="${RPI5_COMPOSE_SELECTION_FAILURE_SERVICE:-none}"
+        record_docker_evidence "$project_name" rollback-target-selection compose-target-selection failed \
+            "$selection_rc" unknown "$reason" "$service" "$phase_start" "$phase_end"
+        return 2
+    fi
+
+    phase_start="$(date +%s)"
+    rollback_rc=0
+    rpi5_capture_command_evidence "$rollback_log" "$project_dir" \
+        docker compose up "${RPI5_COMPOSE_UP_ARGS[@]}" || rollback_rc=$?
+    phase_end="$(date +%s)"
+    if [[ "$rollback_rc" -eq 0 ]]; then
+        rpi5_snapshot_compose_state "$project_dir" "$state_after_file" || true
         if check_project_runtime "$project_name" "$project_dir"; then
             rollback_ok=1
+            record_docker_evidence "$project_name" rollback compose-up succeeded 0 \
+                rolled-back none none "$phase_start" "$phase_end"
             log "${project_name}: rollback izdevās; iepriekšējie image atjaunoti."
         else
+            record_docker_evidence "$project_name" rollback-readiness compose-runtime-check failed 1 \
+                unknown runtime-unhealthy none "$phase_start" "$phase_end"
             log "KRITISKI: ${project_name} rollback runtime pārbaude neizdevās."
         fi
     else
+        reason="$(rpi5_docker_failure_reason_from_log "$rollback_log" "$rollback_rc" 'rollback-command-failed')"
+        record_docker_evidence "$project_name" rollback compose-up failed "$rollback_rc" \
+            unknown "$reason" none "$phase_start" "$phase_end"
         log "KRITISKI: ${project_name} rollback neizdevās."
     fi
 
     [[ "$rollback_ok" -eq 1 ]] || return 2
     return 1
+}
+
+record_final_docker_health() {
+    local project_name="$1" project_dir="$2" evidence_base="${EVIDENCE_DIR:-$TMP_DIR}"
+    local state_file="${evidence_base}/docker-${project_name}-state-final.tsv"
+    local phase_start phase_end health_rc mutation
+
+    phase_start="$(date +%s)"
+    mutation="${DOCKER_LAST_MUTATION[$project_name]:-unknown}"
+    if ! rpi5_snapshot_compose_state "$project_dir" "$state_file"; then
+        phase_end="$(date +%s)"
+        DOCKER_FINAL_HEALTH["$project_name"]='unknown'
+        record_docker_evidence "$project_name" final-health compose-state-snapshot unknown 2 \
+            "$mutation" state-snapshot-failed none "$phase_start" "$phase_end"
+        return 0
+    fi
+
+    health_rc=0
+    check_project_runtime "$project_name" "$project_dir" || health_rc=$?
+    phase_end="$(date +%s)"
+    if [[ "$health_rc" -eq 0 ]]; then
+        DOCKER_FINAL_HEALTH["$project_name"]='healthy'
+        record_docker_evidence "$project_name" final-health compose-runtime-check healthy 0 \
+            "$mutation" none none "$phase_start" "$phase_end"
+    else
+        DOCKER_FINAL_HEALTH["$project_name"]='unhealthy'
+        record_docker_evidence "$project_name" final-health compose-runtime-check unhealthy "$health_rc" \
+            "$mutation" runtime-unhealthy none "$phase_start" "$phase_end"
+    fi
 }
 
 CURRENT_PHASE="Docker main"
@@ -1226,6 +1392,7 @@ if update_compose_project "main" "$MAIN_COMPOSE_DIR"; then
 else
     MAIN_DOCKER_STATUS=$?
 fi
+MAIN_DOCKER_SUMMARY_INDEX=${#SUMMARY_LINES[@]}
 SUMMARY_LINES+=("🐳 Docker main: $(status_icon "$MAIN_DOCKER_STATUS")")
 
 CURRENT_PHASE="Docker CV"
@@ -1237,9 +1404,21 @@ if [[ "$MAIN_DOCKER_STATUS" -eq 0 ]]; then
     fi
 else
     CV_DOCKER_STATUS=1
+    DOCKER_FAILURE_PHASE[cv]='skipped'
+    DOCKER_FAILURE_REASON[cv]='main-failed'
+    DOCKER_LAST_MUTATION[cv]='none'
     log "CV stack update izlaists, jo main stack update neizdevās."
 fi
+CV_DOCKER_SUMMARY_INDEX=${#SUMMARY_LINES[@]}
 SUMMARY_LINES+=("🐳 Docker CV: $(status_icon "$CV_DOCKER_STATUS")")
+
+if [[ "$MODE" == "run" ]]; then
+    CURRENT_PHASE="Docker final health"
+    record_final_docker_health "main" "$MAIN_COMPOSE_DIR"
+    record_final_docker_health "cv" "$CV_COMPOSE_DIR"
+fi
+SUMMARY_LINES[$MAIN_DOCKER_SUMMARY_INDEX]="🐳 Docker main: $(docker_summary_line main "$MAIN_DOCKER_STATUS")"
+SUMMARY_LINES[$CV_DOCKER_SUMMARY_INDEX]="🐳 Docker CV: $(docker_summary_line cv "$CV_DOCKER_STATUS")"
 
 CURRENT_PHASE="veselības pārbaudes"
 log "----- Veselības pārbaudes -----"
@@ -1463,6 +1642,10 @@ fi
 REPORT+="
 
 Logs: ${LOG}"
+if [[ -n "$EVIDENCE_DIR" ]]; then
+    REPORT+="
+Evidence: ${EVIDENCE_DIR}"
+fi
 
 printf '\n%s\n' "$REPORT"
 
@@ -1471,7 +1654,7 @@ if [[ "$MODE" == "run" ]]; then
 fi
 FINAL_SENT=1
 
-log "===== RPi5 UPDATE v27 PABEIGTS: status=${OVERALL_STATUS}, ilgums=${DURATION} ====="
+log "===== RPi5 UPDATE v28 PABEIGTS: status=${OVERALL_STATUS}, ilgums=${DURATION} ====="
 
 if [[ "$REBOOT_REQUIRED" -eq 1 && "$MODE" == "run" ]]; then
     log "Drošs reboot ieplānots pēc 1 minūtes: ${REBOOT_REASON}"

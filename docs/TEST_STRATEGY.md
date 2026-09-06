@@ -4,23 +4,26 @@
 
 1. **Static:** shell syntax, Python compile, unit-file/config validation where feasible.
 2. **Policy unit tests:** APT, cleanup, locks, origin/provenance, reboot, Compose decisions, health interpretation.
-3. **Transaction tests:** fake Docker/Compose/systemctl/apt executables exercise exit codes, timeouts and state transitions without touching a real host.
-4. **Regression fixtures:** incidents become deterministic fixtures.
-5. **Integration/shadow:** run verifier/check mode against the RPi5 with no mutation.
+3. **Transaction/evidence tests:** fake Docker/Compose/systemctl/apt executables exercise exit codes, timeout classification and state transitions without a production socket.
+4. **Regression fixtures:** incidents become deterministic, sanitized fixtures.
+5. **Integration/shadow:** run verifier/check mode against the RPi5 with no production mutation.
 6. **Release candidate:** controlled production activation only after source gates pass.
 
 ## Mandatory regression: 2026-09-06
 
-Simulate a large candidate image, `compose up` non-zero, no retained unhealthy mutation, eventual 20/20 healthy, transient dependent service reconnects, no reboot required.
+The preserved host evidence shows Docker packages were upgraded, Docker restarted, `mosquitto` remained stopped during the main Docker phase, candidate pulls completed, and V27 then reported only a generic main failure. The exact historical post-pull return statement was not retained.
 
-Expected behavior after redesign:
+The P1 executable fixture reproduces the evidence-backed path: candidate pull complete -> registry-backed service has no running container -> target selection returns a stable `missing-running-container` reason before reconcile.
 
-- exact Compose error retained;
-- final classification is evidence-based (`RECOVERED` or `DEGRADED` depending mutation/convergence evidence), not blindly `CRITICAL`;
-- CV continuation decision uses shared-infrastructure gate;
-- no restart storm;
-- report distinguishes update failure from healthy final system;
-- reboot remains unnecessary when host does not require one.
+P1 also tests evidence primitives for:
+
+- lossless command stdout/stderr capture with exact exit code;
+- timeout/readiness reason classification;
+- before/after mutation state;
+- sanitized structured phase records;
+- final Compose health capture.
+
+P1 does not change CV failure-domain continuation, automatic remediation or systemd dependency backoff; those remain later milestones.
 
 ## Safety
 

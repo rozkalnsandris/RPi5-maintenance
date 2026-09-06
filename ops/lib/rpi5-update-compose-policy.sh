@@ -76,6 +76,11 @@ rpi5_local_image_id() {
     docker image inspect --format '{{.Id}}' "$image_ref"
 }
 
+rpi5_compose_selection_error() {
+    RPI5_COMPOSE_SELECTION_FAILURE_REASON="${1:-unknown}"
+    RPI5_COMPOSE_SELECTION_FAILURE_SERVICE="${2:-none}"
+}
+
 rpi5_select_compose_update_targets() {
     local project_dir="${1:?missing compose project directory}"
     local inventory service kind image_ref container_id
@@ -86,12 +91,23 @@ rpi5_select_compose_update_targets() {
     RPI5_COMPOSE_REGISTRY_SERVICES=()
     RPI5_COMPOSE_CHANGED_REGISTRY_SERVICES=()
     RPI5_COMPOSE_CONFIG_DRIFT_SERVICE=''
+    RPI5_COMPOSE_SELECTION_FAILURE_REASON=''
+    RPI5_COMPOSE_SELECTION_FAILURE_SERVICE=''
 
-    inventory="$(rpi5_compose_service_inventory "$project_dir")" || return 2
-    [[ -n "$inventory" ]] || return 2
+    inventory="$(rpi5_compose_service_inventory "$project_dir")" || {
+        rpi5_compose_selection_error 'inventory-command-failed' 'none'
+        return 2
+    }
+    [[ -n "$inventory" ]] || {
+        rpi5_compose_selection_error 'inventory-empty' 'none'
+        return 2
+    }
 
     while IFS=$'\t' read -r service kind image_ref; do
-        [[ -n "$service" ]] || return 2
+        [[ -n "$service" ]] || {
+            rpi5_compose_selection_error 'invalid-service-entry' 'none'
+            return 2
+        }
         RPI5_COMPOSE_ALL_SERVICES+=("$service")
 
         case "$kind" in
@@ -99,31 +115,57 @@ rpi5_select_compose_update_targets() {
                 RPI5_COMPOSE_BUILDABLE_SERVICES+=("$service")
                 ;;
             registry)
-                [[ -n "$image_ref" ]] || return 2
+                [[ -n "$image_ref" ]] || {
+                    rpi5_compose_selection_error 'missing-image-ref' "$service"
+                    return 2
+                }
                 RPI5_COMPOSE_REGISTRY_SERVICES+=("$service")
 
                 container_id="$(
                     rpi5_compose_service_container_id "$project_dir" "$service"
-                )" || return 2
-                [[ -n "$container_id" ]] || return 2
+                )" || {
+                    rpi5_compose_selection_error 'container-query-failed' "$service"
+                    return 2
+                }
+                [[ -n "$container_id" ]] || {
+                    rpi5_compose_selection_error 'missing-running-container' "$service"
+                    return 2
+                }
 
-                running_image="$(rpi5_container_image_id "$container_id")" \
-                    || return 2
-                desired_image="$(rpi5_local_image_id "$image_ref")" \
-                    || return 2
-                [[ -n "$running_image" && -n "$desired_image" ]] || return 2
+                running_image="$(rpi5_container_image_id "$container_id")" || {
+                    rpi5_compose_selection_error 'running-image-query-failed' "$service"
+                    return 2
+                }
+                desired_image="$(rpi5_local_image_id "$image_ref")" || {
+                    rpi5_compose_selection_error 'desired-image-query-failed' "$service"
+                    return 2
+                }
+                [[ -n "$running_image" && -n "$desired_image" ]] || {
+                    rpi5_compose_selection_error 'missing-image-id' "$service"
+                    return 2
+                }
 
                 if [[ "$running_image" != "$desired_image" ]]; then
                     running_hash="$(
                         rpi5_container_compose_config_hash "$container_id"
-                    )" || return 2
+                    )" || {
+                        rpi5_compose_selection_error 'running-config-hash-query-failed' "$service"
+                        return 2
+                    }
                     desired_hash="$(
                         rpi5_compose_service_config_hash "$project_dir" "$service"
-                    )" || return 2
-                    [[ -n "$running_hash" && -n "$desired_hash" ]] || return 2
+                    )" || {
+                        rpi5_compose_selection_error 'desired-config-hash-query-failed' "$service"
+                        return 2
+                    }
+                    [[ -n "$running_hash" && -n "$desired_hash" ]] || {
+                        rpi5_compose_selection_error 'missing-config-hash' "$service"
+                        return 2
+                    }
 
                     if [[ "$running_hash" != "$desired_hash" ]]; then
                         RPI5_COMPOSE_CONFIG_DRIFT_SERVICE="$service"
+                        rpi5_compose_selection_error 'config-drift' "$service"
                         return 3
                     fi
 
@@ -131,12 +173,16 @@ rpi5_select_compose_update_targets() {
                 fi
                 ;;
             *)
+                rpi5_compose_selection_error 'unsupported-service-kind' "$service"
                 return 2
                 ;;
         esac
     done <<<"$inventory"
 
-    (( ${#RPI5_COMPOSE_ALL_SERVICES[@]} > 0 )) || return 2
+    (( ${#RPI5_COMPOSE_ALL_SERVICES[@]} > 0 )) || {
+        rpi5_compose_selection_error 'inventory-empty' 'none'
+        return 2
+    }
 }
 
 # Sets RPI5_COMPOSE_UP_ARGS to the reviewed unattended-maintenance arguments.
