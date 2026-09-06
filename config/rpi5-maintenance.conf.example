@@ -1,0 +1,21 @@
+# Example only. Do not copy blindly to production.
+# Secrets do not belong in this file/repository.
+
+[maintenance]
+evidence_root=/var/log/rpi5-maintenance
+
+[docker]
+# 0 = Docker Compose default; 1 can be tested as a low-resource safety option.
+pull_parallelism=0
+
+[stack.main]
+wait_timeout_seconds=CHANGE_ME_AFTER_MEASUREMENT
+required=true
+
+[stack.cv]
+wait_timeout_seconds=CHANGE_ME_AFTER_MEASUREMENT
+required=true
+
+[doctor]
+enabled=true
+max_actions_per_run=CHANGE_ME_AFTER_POLICY_REVIEW

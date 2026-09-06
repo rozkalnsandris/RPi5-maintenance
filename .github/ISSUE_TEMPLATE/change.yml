@@ -1,0 +1,44 @@
+name: Maintenance change
+description: Propose a policy, architecture, reliability, release, or operational change.
+title: "[change] "
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / evidence
+      description: Describe the operational problem and evidence that justifies changing behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: invariant
+    attributes:
+      label: Safety invariant
+      description: Which safety properties must remain true?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed change
+    validations:
+      required: true
+  - type: textarea
+    id: tests
+    attributes:
+      label: Tests / verification
+      description: How will the change be proven without relying on production as the test environment?
+    validations:
+      required: true
+  - type: textarea
+    id: rollback
+    attributes:
+      label: Rollback / failure handling
+    validations:
+      required: true
+  - type: checkboxes
+    id: boundary
+    attributes:
+      label: Production boundary
+      options:
+        - label: I understand that merge approval is not production activation authorization.
+          required: true

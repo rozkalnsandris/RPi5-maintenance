@@ -1,0 +1,12 @@
+.env
+.env.*
+!.env.example
+*.log
+*.tmp
+*.swp
+__pycache__/
+.pytest_cache/
+.coverage
+artifacts/
+evidence/
+.DS_Store

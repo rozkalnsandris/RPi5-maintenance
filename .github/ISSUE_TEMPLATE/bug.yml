@@ -1,0 +1,51 @@
+name: Maintenance bug
+description: Report a reproducible updater, verifier, doctor, release, or integration defect.
+title: "[bug] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not paste secrets, tokens, private environment files, or unredacted production credentials.
+  - type: textarea
+    id: observed
+    attributes:
+      label: Observed behavior
+      description: What happened? Include the maintenance phase and sanitized run/evidence ID when available.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Sanitized evidence
+      description: Exact error, exit code, timeout, state transition, or relevant sanitized log excerpt.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected invariant
+      description: What should have remained true or what state should have been reached?
+    validations:
+      required: true
+  - type: dropdown
+    id: mutation
+    attributes:
+      label: Mutation state
+      options:
+        - none
+        - changed and verified
+        - rolled back and verified
+        - partial or unknown
+    validations:
+      required: true
+  - type: dropdown
+    id: health
+    attributes:
+      label: Final health
+      options:
+        - healthy
+        - degraded
+        - unhealthy
+        - unknown
+    validations:
+      required: true

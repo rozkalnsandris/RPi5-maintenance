@@ -1,0 +1,9 @@
+# Default owner for this production-maintenance control plane.
+* @rozkalnsandris
+
+# Security-sensitive governance and automation paths.
+/.github/ @rozkalnsandris
+/AGENTS.md @rozkalnsandris
+/SECURITY.md @rozkalnsandris
+/ops/ @rozkalnsandris
+/scripts/ @rozkalnsandris
