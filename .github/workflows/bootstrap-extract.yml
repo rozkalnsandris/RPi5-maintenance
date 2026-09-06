@@ -1,0 +1,104 @@
+name: bootstrap-extract-maintenance-source
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/bootstrap-extract.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: bootstrap-extract-maintenance-source
+  cancel-in-progress: false
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout target repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: target
+          fetch-depth: 0
+
+      - name: Checkout exact RPi5_main baseline
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: rozkalnsandris/RPi5_main
+          ref: e949f7835898fc207aa137cb26ffb6dfc701a497
+          path: source
+          persist-credentials: false
+
+      - name: Verify source identity and copy extraction manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C source rev-parse HEAD)" = "e949f7835898fc207aa137cb26ffb6dfc701a497"
+          cd target
+          while IFS= read -r rel; do
+            [[ -z "$rel" || "$rel" =~ ^[[:space:]]*# ]] && continue
+            test -f "../source/$rel"
+            mkdir -p "$(dirname "$rel")"
+            cp -p "../source/$rel" "$rel"
+          done < SOURCE_EXTRACTION_MANIFEST.txt
+
+      - name: Record extraction provenance
+        shell: bash
+        env:
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          mkdir -p target/provenance
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          obj = {
+              "source_repository": "rozkalnsandris/RPi5_main",
+              "source_commit": "e949f7835898fc207aa137cb26ffb6dfc701a497",
+              "source_tree": "bde4469517650594fbab6838f60af4c9ab472830",
+              "method": "bootstrap-extract-maintenance-source",
+              "workflow_run_id": os.environ["RUN_ID"],
+              "workflow_run_attempt": os.environ["RUN_ATTEMPT"],
+          }
+          Path("target/provenance/extraction.json").write_text(json.dumps(obj, indent=2) + "\n", encoding="utf-8")
+          PY
+
+      - name: Verify manifest completeness and syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd target
+          ./scripts/verify_extraction.sh .
+          ./scripts/bootstrap_validate.sh .
+          find ops scripts tests -type f -name '*.sh' -print0 | xargs -0 -r -n1 bash -n
+          python3 -m compileall -q ops scripts tests
+          git diff --check
+
+      - name: Run imported maintenance parity tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd target
+          while IFS= read -r rel; do
+            case "$rel" in
+              tests/test-maintenance-*.sh) bash "$rel" ;;
+              tests/test-maintenance-*.py) python3 "$rel" ;;
+            esac
+          done < SOURCE_EXTRACTION_MANIFEST.txt
+
+      - name: Commit exact source import and remove bootstrap writer
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd target
+          rm -f .github/workflows/bootstrap-extract.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "source: import maintenance baseline from RPi5_main e949f783"
+          git push origin HEAD:main
