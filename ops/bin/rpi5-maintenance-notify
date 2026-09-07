@@ -7,10 +7,25 @@ export LC_ALL=C
 export LANG=C
 
 readonly TELEGRAM_HELPER="/usr/local/lib/rpi5-maintenance/rpi5-maintenance-telegram.py"
-readonly FALLBACK_UNIT="${1:-unknown.service}"
+readonly FALLBACK_INSTANCE="${1:-unknown.service}"
 
-unit="${MONITOR_UNIT:-$FALLBACK_UNIT}"
-result="${MONITOR_SERVICE_RESULT:-unknown}"
+case "$FALLBACK_INSTANCE" in
+    success-*)
+        fallback_unit="${FALLBACK_INSTANCE#success-}"
+        fallback_result="success"
+        ;;
+    failure-*)
+        fallback_unit="${FALLBACK_INSTANCE#failure-}"
+        fallback_result="failure"
+        ;;
+    *)
+        fallback_unit="$FALLBACK_INSTANCE"
+        fallback_result="unknown"
+        ;;
+esac
+
+unit="${MONITOR_UNIT:-$fallback_unit}"
+result="${MONITOR_SERVICE_RESULT:-$fallback_result}"
 exit_code="${MONITOR_EXIT_CODE:-unknown}"
 exit_status="${MONITOR_EXIT_STATUS:-unknown}"
 invocation_id="${MONITOR_INVOCATION_ID:-unknown}"
