@@ -3,8 +3,8 @@ Description=RPi5 post-reboot readiness verification
 Documentation=https://github.com/rozkalnsandris/RPi5_main
 Wants=network-online.target
 After=network-online.target docker.service cloudflared.service ssh.service
-OnSuccess=rpi5-maintenance-notify@%N.service
-OnFailure=rpi5-maintenance-notify@%N.service
+OnSuccess=rpi5-maintenance-notify@success-%N.service
+OnFailure=rpi5-maintenance-notify@failure-%N.service
 
 [Service]
 Type=oneshot

@@ -44,8 +44,13 @@ grep -Fxq 'OnFailure=rpi5-maintenance-notify@%N.service' "$unit_dir/rpi5-monitor
 
 grep -Fxq 'Type=oneshot' "$unit_dir/rpi5-post-reboot.service"
 grep -Fxq 'TimeoutStartSec=7min' "$unit_dir/rpi5-post-reboot.service"
-grep -Fxq 'OnSuccess=rpi5-maintenance-notify@%N.service' "$unit_dir/rpi5-post-reboot.service"
-grep -Fxq 'OnFailure=rpi5-maintenance-notify@%N.service' "$unit_dir/rpi5-post-reboot.service"
+grep -Fxq 'OnSuccess=rpi5-maintenance-notify@success-%N.service' "$unit_dir/rpi5-post-reboot.service"
+grep -Fxq 'OnFailure=rpi5-maintenance-notify@failure-%N.service' "$unit_dir/rpi5-post-reboot.service"
+
+post_success_handler="$(awk -F= '$1 == "OnSuccess" {print $2}' "$unit_dir/rpi5-post-reboot.service")"
+post_failure_handler="$(awk -F= '$1 == "OnFailure" {print $2}' "$unit_dir/rpi5-post-reboot.service")"
+[[ -n "$post_success_handler" && -n "$post_failure_handler" ]]
+[[ "$post_success_handler" != "$post_failure_handler" ]]
 
 grep -Fxq 'DynamicUser=yes' "$unit_dir/rpi5-maintenance-notify@.service"
 grep -Fxq 'LoadCredential=telegram-token:/etc/credstore/rpi5-maintenance-telegram-token' "$unit_dir/rpi5-maintenance-notify@.service"
