@@ -50,6 +50,28 @@ Read-only verification after activation showed:
 - `/run/reboot-required`: absent;
 - historical `rpi5-update.service=failed` remains intentionally uncleared from the 2026-09-06 pre-V28 incident and is not evidence of activation failure.
 
+## Post-reboot notifier incident and live fix
+
+On 2026-09-07 the normal boot-time `rpi5-post-reboot.service` completed successfully (`Result=success`, `ExecMainStatus=0`, readiness PASS on attempt 3/30), but its Telegram notification incorrectly reported a maintenance failure with `unknown` monitor metadata. Read-only journal evidence showed systemd skipped monitor-result propagation because the same notifier instance had been configured for both `OnSuccess=` and `OnFailure=`.
+
+PR **#7** fixed the ambiguity by using distinct success/failure notifier instances and adding an instance-name fallback in `rpi5-maintenance-notify`. PR #7 merged to `main` as `115a8162ed650e7b153124b49be30f499d4af47f`; exact PR head `88b143b3faef6b8ebd5f4e6c668b4b9116b1720a` passed `validate` run `34147197655`.
+
+A separately authorized LIVE deployment on 2026-09-07 installed only the reviewed notifier fix plus `systemctl daemon-reload`; no service restart, manual maintenance run, cleanup or reboot was performed. Fresh live evidence after deployment:
+
+- `/etc/systemd/system/rpi5-post-reboot.service` SHA256 `467e1c0b5825e62bbd9eee7fce1df4d4f7b33ca88bd4e90b9be13cf7135f606c`, owner/mode `root:root 0644`;
+- `/usr/local/sbin/rpi5-maintenance-notify` SHA256 `46241a4c73245379de53844fc148d38bab558337845f41911012a04ffeb58703`, owner/mode `root:root 0755`;
+- effective `OnSuccess=rpi5-maintenance-notify@success-rpi5-post-reboot.service`;
+- effective `OnFailure=rpi5-maintenance-notify@failure-rpi5-post-reboot.service`;
+- notifier `bash -n`: PASS;
+- `rpi5-post-reboot.service`: loaded/enabled, last result remains `success`, `ExecMainStatus=0`;
+- `rpi5-update.timer` and `rpi5-monitor.timer`: active/waiting;
+- no relevant failed maintenance units observed;
+- `/run/reboot-required`: absent.
+
+A non-root `systemd-analyze verify` returned `rc=1` because `/usr/local/sbin/rpi5-post-reboot` is intentionally `root:root 0750`, so the unprivileged verifier reported `Permission denied`; it also surfaced an unrelated `dashboard-rpi5-terminal.socket` warning. No retry or corrective LIVE mutation was performed. The system manager itself has loaded the reviewed unit and resolves the two distinct notifier dependencies as shown above.
+
+This records the fix deployment only. It is **not** stable-production proof: the corrected post-reboot notification path has not been manually triggered after deployment, and manual execution remains outside this lane without a new LIVE authorization.
+
 ## Current lane — post-cutover stability proof
 
 The immediate lane is **read-only post-cutover stability proof**. Do not start P2/P3 behavior changes or remove duplicated maintenance source from `RPi5_main` inside this lane.
@@ -58,16 +80,17 @@ The purpose is to prove the installed `0.2.0` control-plane remains stable under
 
 Current gate:
 
-1. Preserve the exact production identity above as the cutover baseline.
-2. Do not manually run maintenance merely to manufacture stability evidence; a manual run would require a new LIVE authorization.
-3. After the next normal scheduled maintenance run, collect minimum read-only evidence for:
+1. Preserve the exact production identity above as the cutover baseline, including the separately reviewed PR #7 notifier hotfix identity.
+2. Do not manually run maintenance or `rpi5-post-reboot.service` merely to manufacture stability evidence; either manual run would require a new LIVE authorization.
+3. The next normal `rpi5-update.timer` run is scheduled for **2026-09-13 02:20 CEST**. After that run, collect minimum read-only evidence for:
    - updater run result and exit status;
    - V28 run-scoped Docker evidence presence/shape when Docker phases execute;
    - main/CV Compose runtime health;
    - relevant local/public health gates if the run touched them;
    - timer/service state;
    - reboot-required/result state;
-   - any failure-domain behavior actually exercised.
+   - any failure-domain behavior actually exercised;
+   - if a reboot/post-reboot path actually occurs, the corrected notifier result and absence of the prior trigger-source ambiguity.
 4. If the scheduled run is healthy, record stable-production proof in canonical continuity.
 5. Only after stable operation may Phase 9 removal of duplicated maintenance source from `RPi5_main` be considered.
 
