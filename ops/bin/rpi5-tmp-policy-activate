@@ -1,0 +1,167 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+IFS=$'\n\t'
+umask 077
+PATH='/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
+export PATH
+
+readonly EXPECTED_HOST='rpi5'
+readonly FSTAB='/etc/fstab'
+readonly TMPFILES_DEST='/etc/tmpfiles.d/tmp.conf'
+readonly TMP_MOUNT_MASK='/etc/systemd/system/tmp.mount'
+readonly EXPECTED_FSTAB_LINE='tmpfs /tmp tmpfs defaults,strictatime,nosuid,nodev,mode=1777,size=50% 0 0'
+readonly DISABLED_FSTAB_LINE='# rpi5-maintenance disk-backed /tmp: tmpfs /tmp tmpfs defaults,strictatime,nosuid,nodev,mode=1777,size=50% 0 0'
+readonly EXPECTED_TMPFILES_CONTENT=$'# Managed by RPi5-maintenance. Keep /tmp disk-backed and age-clean only this explicit temporary scope.\nD /tmp 1777 root root 14d\n'
+
+mutation_started=false
+state_dir=''
+
+fail() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
+log() { printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"; }
+
+on_exit() {
+    local rc=$?
+    trap - EXIT
+    if (( rc != 0 )) && [[ "$mutation_started" == true ]]; then
+        printf 'STOP: tmp policy activation failed after the first host write; no automatic retry, rollback, cleanup, unmount, service restart, or reboot was attempted.\n' >&2
+        printf 'PRESERVED_STATE_DIR=%s\n' "${state_dir:-not-created}" >&2
+    fi
+    exit "$rc"
+}
+trap on_exit EXIT
+
+count_exact_line() {
+    local line="$1"
+    grep -Fxc -- "$line" "$FSTAB" || true
+}
+
+tmpfiles_matches() {
+    [[ -f "$TMPFILES_DEST" && ! -L "$TMPFILES_DEST" ]] || return 1
+    [[ "$(cat "$TMPFILES_DEST")"$'\n' == "$EXPECTED_TMPFILES_CONTENT" ]] || return 1
+    [[ "$(stat -c '%u:%g:%a' "$TMPFILES_DEST")" == '0:0:644' ]]
+}
+
+mask_matches() {
+    [[ -L "$TMP_MOUNT_MASK" ]] || return 1
+    [[ "$(readlink "$TMP_MOUNT_MASK")" == '/dev/null' ]]
+}
+
+persistent_state() {
+    local legacy_count disabled_count
+    legacy_count="$(count_exact_line "$EXPECTED_FSTAB_LINE")"
+    disabled_count="$(count_exact_line "$DISABLED_FSTAB_LINE")"
+
+    if [[ "$legacy_count" == 1 && "$disabled_count" == 0 && ! -e "$TMPFILES_DEST" && ! -L "$TMPFILES_DEST" && ! -e "$TMP_MOUNT_MASK" && ! -L "$TMP_MOUNT_MASK" ]]; then
+        printf '%s\n' legacy
+        return 0
+    fi
+    if [[ "$legacy_count" == 0 && "$disabled_count" == 1 ]] && tmpfiles_matches && mask_matches; then
+        printf '%s\n' policy-installed
+        return 0
+    fi
+    printf '%s\n' mixed
+}
+
+runtime_state() {
+    local target fstype
+    target="$(findmnt -n -o TARGET --target /tmp)" || return 1
+    fstype="$(findmnt -n -o FSTYPE --target /tmp)" || return 1
+    if [[ "$target" == '/tmp' && "$fstype" == 'tmpfs' ]]; then
+        printf '%s\n' tmpfs-active
+    elif [[ "$target" == '/' && "$fstype" != 'tmpfs' ]]; then
+        printf '%s\n' disk-backed
+    else
+        printf 'unexpected:%s:%s\n' "$target" "$fstype"
+    fi
+}
+
+write_candidates() {
+    cp -a -- "$FSTAB" "$state_dir/fstab.before"
+    python3 - "$state_dir/fstab.before" "$state_dir/fstab.candidate" "$EXPECTED_FSTAB_LINE" "$DISABLED_FSTAB_LINE" <<'PY'
+from pathlib import Path
+import sys
+
+src = Path(sys.argv[1])
+dst = Path(sys.argv[2])
+old = sys.argv[3]
+new = sys.argv[4]
+text = src.read_text(encoding='utf-8')
+lines = text.splitlines()
+if lines.count(old) != 1 or new in lines:
+    raise SystemExit('fstab candidate refused: expected exact /tmp tmpfs line once')
+lines[lines.index(old)] = new
+dst.write_text('\n'.join(lines) + ('\n' if text.endswith('\n') else ''), encoding='utf-8')
+PY
+    printf '%s' "$EXPECTED_TMPFILES_CONTENT" >"$state_dir/tmp.conf.candidate"
+    grep -Fqx -- "$DISABLED_FSTAB_LINE" "$state_dir/fstab.candidate" || fail 'candidate fstab missing disabled /tmp marker'
+    [[ "$(cat "$state_dir/tmp.conf.candidate")"$'\n' == "$EXPECTED_TMPFILES_CONTENT" ]] || fail 'candidate tmpfiles content mismatch'
+}
+
+install_policy() {
+    local fstab_stage tmpfiles_stage mask_stage
+    fstab_stage="${FSTAB}.rpi5-tmp-policy-stage.$$"
+    tmpfiles_stage="/etc/tmpfiles.d/.tmp.conf.rpi5-tmp-policy-stage.$$"
+    mask_stage="/etc/systemd/system/.tmp.mount.rpi5-tmp-policy-stage.$$"
+
+    install -o root -g root -m 0644 -- "$state_dir/fstab.candidate" "$fstab_stage"
+    mv -Tf -- "$fstab_stage" "$FSTAB"
+
+    install -o root -g root -m 0644 -- "$state_dir/tmp.conf.candidate" "$tmpfiles_stage"
+    mv -Tf -- "$tmpfiles_stage" "$TMPFILES_DEST"
+
+    ln -s -- /dev/null "$mask_stage"
+    mv -Tf -- "$mask_stage" "$TMP_MOUNT_MASK"
+}
+
+main() {
+    [[ $# -eq 1 && ( "$1" == '--preflight' || "$1" == '--apply' || "$1" == '--verify' ) ]] || fail 'usage: rpi5-tmp-policy-activate --preflight|--apply|--verify'
+    local action="$1" command_name persistent runtime fstab_mode
+    for command_name in cat chmod cp date findmnt grep hostname install ln mktemp mv python3 readlink stat; do
+        command -v "$command_name" >/dev/null 2>&1 || fail "required command is missing: $command_name"
+    done
+    [[ "$(hostname -s)" == "$EXPECTED_HOST" ]] || fail "unexpected host; expected $EXPECTED_HOST"
+    [[ -f "$FSTAB" && ! -L "$FSTAB" ]] || fail 'unsafe or missing /etc/fstab'
+    [[ "$(stat -c '%u:%g' "$FSTAB")" == '0:0' ]] || fail '/etc/fstab is not root-owned'
+    fstab_mode="$(stat -c '%a' "$FSTAB")"
+    (( (8#$fstab_mode & 022) == 0 )) || fail '/etc/fstab is group/world writable'
+    [[ -d /etc/tmpfiles.d && ! -L /etc/tmpfiles.d ]] || fail 'unsafe or missing /etc/tmpfiles.d'
+    [[ -d /etc/systemd/system && ! -L /etc/systemd/system ]] || fail 'unsafe or missing /etc/systemd/system'
+
+    persistent="$(persistent_state)"
+    runtime="$(runtime_state)"
+    printf 'TMP_POLICY_PERSISTENT_STATE=%s\n' "$persistent"
+    printf 'TMP_POLICY_RUNTIME_STATE=%s\n' "$runtime"
+
+    if [[ "$action" == '--preflight' ]]; then
+        [[ "$persistent" == legacy && "$runtime" == tmpfs-active ]] || fail 'preflight requires exact legacy tmpfs state; mixed/staged/active state is read-only STOP'
+        printf 'TMP_POLICY_PREFLIGHT=PASS\nMUTATION_PERFORMED=false\nREBOOT_PERFORMED=false\n'
+        return 0
+    fi
+
+    if [[ "$action" == '--verify' ]]; then
+        [[ "$persistent" == policy-installed && "$runtime" == disk-backed ]] || fail 'post-reboot verification requires installed policy and disk-backed /tmp'
+        [[ "$(stat -c '%a' /tmp)" == '1777' ]] || fail '/tmp mode is not 1777'
+        printf 'TMP_POLICY_POST_REBOOT_VERIFY=PASS\nMUTATION_PERFORMED=false\nREBOOT_PERFORMED=false\n'
+        return 0
+    fi
+
+    [[ ${EUID:-$(id -u)} -eq 0 ]] || fail '--apply must run as root'
+    [[ "$persistent" == legacy && "$runtime" == tmpfs-active ]] || fail '--apply refused because host state drifted from exact preflight state'
+
+    mutation_started=true
+    state_dir="$(mktemp -d /root/rpi5-tmp-policy-XXXXXXXX)"
+    chmod 0700 "$state_dir"
+    write_candidates
+    install_policy
+
+    persistent="$(persistent_state)"
+    runtime="$(runtime_state)"
+    [[ "$persistent" == policy-installed ]] || fail 'persistent tmp policy verification failed after write'
+    [[ "$runtime" == tmpfs-active ]] || fail 'current /tmp mount changed unexpectedly; operator never unmounts or remounts it'
+
+    log 'persistent disk-backed /tmp policy staged; current tmpfs intentionally remains active until an explicitly authorized reboot'
+    printf 'TMP_POLICY_STAGE=PASS\nMUTATION_PERFORMED=true\nREBOOT_PERFORMED=false\nREBOOT_REQUIRED_FOR_TMP_POLICY=true\n'
+    printf 'PRESERVED_STATE_DIR=%s\n' "$state_dir"
+}
+
+main "$@"
