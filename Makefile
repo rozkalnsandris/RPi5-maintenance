@@ -27,6 +27,7 @@ test:
 	python3 ./tests/test-maintenance-v27-activation-transaction.py
 	python3 ./tests/test-maintenance-v28-activation.py
 	python3 ./tests/test-maintenance-v28-activation-transaction.py
+	python3 ./tests/test-maintenance-tmp-policy.py
 	bash ./tests/test-maintenance-updater-provenance.sh
 	bash ./tests/test-maintenance-updater-source.sh
 	python3 ./tests/test-maintenance-updater-source-validator.py
