@@ -72,17 +72,66 @@ A non-root `systemd-analyze verify` returned `rc=1` because `/usr/local/sbin/rpi
 
 This records the fix deployment only. It is **not** stable-production proof: the corrected post-reboot notification path has not been manually triggered after deployment, and manual execution remains outside this lane without a new LIVE authorization.
 
+## 2026-09-13 scheduled-run outcome
+
+The first normal scheduled stability-proof run after cutover, run id `20260913_022000`, **did not establish stable-production proof**.
+
+Fresh read-only evidence showed:
+
+- `rpi5-update.service`: `Result=exit-code`, `ExecMainStatus=1`;
+- cleanup: PASS, 14-day retention, reported 164 MB delta;
+- APT: 9 packages upgraded successfully;
+- Docker main pull: succeeded with `mutation=changed`;
+- Docker main target selection: failed closed with `rc=3`, `reason=config-drift`, `service=homeassistant`;
+- Docker CV: skipped because main failed;
+- main and CV final-health checks: healthy;
+- local/public endpoint gates: PASS;
+- automatic reboot: blocked because the run had an error;
+- `/run/reboot-required`: absent after the run;
+- `rpi5-update.timer`: active/waiting for the next normal run.
+
+The failure was intended V28 safety behavior, not evidence to weaken the guard: a registry image had changed while the running Home Assistant container's `com.docker.compose.config-hash` differed from the current rendered Compose hash. Issue **#32** captured the incident and remediation evidence.
+
+## Home Assistant reconciliation
+
+On 2026-09-13 the owner manually executed the narrowly scoped reconciliation documented in #32:
+
+```sh
+cd /home/andris/docker
+docker compose up -d --pull never --no-build --wait --wait-timeout 240 --no-deps homeassistant
+```
+
+The command completed successfully. No additional LIVE mutation was initiated by ChatGPT after that owner-executed command.
+
+Fresh read-only verification after reconciliation showed:
+
+- running Home Assistant image: `sha256:a1bc133af84ee6505fe2c266d9805b7c75b780dfdc188edfee3b11e8f3cd8efe`;
+- local `ghcr.io/home-assistant/home-assistant:stable`: same exact image ID;
+- Home Assistant version label: `2026.9.2`;
+- running Compose config hash: `997f6bd4a88112bb607ef18015c64c7c68b64cf862331ebf75e8039aa66e2b60`;
+- current desired `docker compose config --hash homeassistant`: same exact hash;
+- Home Assistant local endpoint: HTTP 200;
+- Home Assistant public endpoint: HTTP 302, matching the established redirect/auth expectation;
+- main Compose: all services running; healthcheck-equipped services healthy;
+- CV Compose: `cv` running, `cvbot` healthy;
+- `/run/reboot-required`: absent;
+- installed V28 Compose-selection policy: PASS; the Home Assistant `config-drift` blocker is gone.
+
+The policy currently sees newer pulled registry images pending for `autoheal`, `grafana`, `grafana-renderer`, and `uptime-kuma`. They were intentionally left untouched after the narrow Home Assistant reconciliation and remain for the normal scheduled maintenance path.
+
+Issue **#32** is closed as completed after the verified Home Assistant reconciliation.
+
 ## Current lane — post-cutover stability proof
 
-The immediate lane is **read-only post-cutover stability proof**. Do not start P2/P3 behavior changes or remove duplicated maintenance source from `RPi5_main` inside this lane.
+The immediate lane remains **read-only post-cutover stability proof**. Do not start P2/P3 behavior changes or remove duplicated maintenance source from `RPi5_main` inside this lane.
 
-The purpose is to prove the installed `0.2.0` control-plane remains stable under normal scheduled operation before migration cleanup. The already reviewed and installed scheduled maintenance policy may execute its exact existing timer-defined scope without a new ChatGPT authorization for each timer run.
+The purpose remains to prove the installed `0.2.0` control-plane stable under normal scheduled operation before migration cleanup. The 2026-09-13 run exercised the V28 failure-domain evidence and fail-closed behavior successfully, but the run itself failed; therefore it cannot be used as stable-production proof.
 
 Current gate:
 
 1. Preserve the exact production identity above as the cutover baseline, including the separately reviewed PR #7 notifier hotfix identity.
-2. Do not manually run maintenance or `rpi5-post-reboot.service` merely to manufacture stability evidence; either manual run would require a new LIVE authorization.
-3. The next normal `rpi5-update.timer` run is scheduled for **2026-09-13 02:20 CEST**. After that run, collect minimum read-only evidence for:
+2. Do not manually run full maintenance or `rpi5-post-reboot.service` merely to manufacture stability evidence; either manual run requires separate LIVE authorization.
+3. The next normal `rpi5-update.timer` run is scheduled for **2026-09-20 02:20 CEST**. After that run, collect minimum read-only evidence for:
    - updater run result and exit status;
    - V28 run-scoped Docker evidence presence/shape when Docker phases execute;
    - main/CV Compose runtime health;
@@ -91,7 +140,7 @@ Current gate:
    - reboot-required/result state;
    - any failure-domain behavior actually exercised;
    - if a reboot/post-reboot path actually occurs, the corrected notifier result and absence of the prior trigger-source ambiguity.
-4. If the scheduled run is healthy, record stable-production proof in canonical continuity.
+4. If that scheduled run is healthy, record stable-production proof in canonical continuity.
 5. Only after stable operation may Phase 9 removal of duplicated maintenance source from `RPi5_main` be considered.
 
 P2 transaction classification/continuation and P3 doctor/backoff remain separate later behavior milestones and require their own scoped work items.
