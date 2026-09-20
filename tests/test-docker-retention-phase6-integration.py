@@ -15,8 +15,8 @@ refresh = REFRESH.read_text(encoding="utf-8")
 config = CONFIG.read_text(encoding="utf-8")
 service = SERVICE.read_text(encoding="utf-8")
 
-assert re.search(r"^[ \\t]*docker[ \\t]+builder[ \\t]+prune\\b", wrapper, re.MULTILINE) is None
-assert re.search(r"^[ \\t]*docker[ \\t]+buildx[ \\t]+prune\\b", wrapper, re.MULTILINE) is None
+assert re.search(r"^[ \t]*docker[ \t]+builder[ \t]+prune\b", wrapper, re.MULTILINE) is None
+assert re.search(r"^[ \t]*docker[ \t]+buildx[ \t]+prune\b", wrapper, re.MULTILINE) is None
 assert "--apply" not in wrapper
 assert "docker image prune -f --filter" in wrapper
 assert "export DOCKER_CLEANUP=no" in wrapper
