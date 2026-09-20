@@ -47,7 +47,7 @@ grep -Fxq 'TimeoutStartSec=2h' "$unit_dir/rpi5-update.service"
 grep -Fxq 'OnFailure=rpi5-maintenance-notify@%N.service' "$unit_dir/rpi5-update.service"
 
 grep -Fxq 'Type=oneshot' "$unit_dir/rpi5-monitor.service"
-grep -Fxq 'TimeoutStartSec=5min' "$unit_dir/rpi5-monitor.service"
+grep -Fxq 'TimeoutStartSec=7min' "$unit_dir/rpi5-monitor.service"
 grep -Fxq 'OnFailure=rpi5-maintenance-notify@%N.service' "$unit_dir/rpi5-monitor.service"
 
 grep -Fxq 'Type=oneshot' "$unit_dir/rpi5-post-reboot.service"

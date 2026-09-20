@@ -8,9 +8,9 @@ export LANG=C
 
 readonly MAINTENANCE_LIB_DIR="/usr/local/lib/rpi5-maintenance"
 readonly HEALTH_LIB="${MAINTENANCE_LIB_DIR}/rpi5-maintenance-health.sh"
-readonly REQUIRED_CONTAINERS_FILE="/etc/rpi5-maintenance/required-containers"
-
-fail=0
+readonly SERVICE_HEALTH_LIB="${MAINTENANCE_LIB_DIR}/rpi5-service-health.sh"
+readonly SERVICE_HEALTH_POLICY_FILE="/etc/rpi5-maintenance/service-health.tsv"
+readonly TRANSIENT_RETRY_DELAY=10
 
 log() {
     printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"
@@ -30,67 +30,170 @@ require_root_controlled_file() {
     exit 1
 }
 
-require_root_controlled_file "$HEALTH_LIB" || {
-    echo "unsafe or missing health library: $HEALTH_LIB" >&2
-    exit 1
-}
+for runtime_file in "$HEALTH_LIB" "$SERVICE_HEALTH_LIB" "$SERVICE_HEALTH_POLICY_FILE"; do
+    require_root_controlled_file "$runtime_file" || {
+        echo "unsafe or missing health runtime file: $runtime_file" >&2
+        exit 1
+    }
+done
 # shellcheck source=/dev/null
 source "$HEALTH_LIB"
+# shellcheck source=/dev/null
+source "$SERVICE_HEALTH_LIB"
 
-require_root_controlled_file "$REQUIRED_CONTAINERS_FILE" || {
-    echo "unsafe or missing required-container inventory: $REQUIRED_CONTAINERS_FILE" >&2
-    exit 1
-}
-required_containers="$(cat "$REQUIRED_CONTAINERS_FILE")"
-
-for command_name in docker systemctl curl stat date cat; do
+for command_name in docker systemctl curl stat date sleep timeout bash; do
     command -v "$command_name" >/dev/null 2>&1 || {
-        log "FAIL missing command: $command_name"
+        log "FAIL_PERSISTENT infrastructure missing-command=${command_name}"
         exit 1
     }
 done
 
-log "RPi5 monitor started"
+http_probe() {
+    local target="$1" attempts="$2" attempt code="000"
+    [[ "$attempts" =~ ^[1-9][0-9]*$ ]] || return 2
+    for ((attempt = 1; attempt <= attempts; attempt++)); do
+        code="$(curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 2 --max-time 3 "$target" 2>/dev/null || true)"
+        [[ "$code" =~ ^[0-9]{3}$ ]] || code="000"
+        rpi5_http_code_is_reachable "$code" && return 0
+        (( attempt == attempts )) || sleep 1
+    done
+    return 1
+}
 
+tcp_probe() {
+    local target="$1" attempts="$2" host port attempt
+    host="${target%:*}"
+    port="${target##*:}"
+    [[ "$host" =~ ^[A-Za-z0-9._-]+$ && "$port" =~ ^[0-9]+$ && "$attempts" =~ ^[1-9][0-9]*$ ]] || return 2
+    for ((attempt = 1; attempt <= attempts; attempt++)); do
+        if timeout 3 bash -c "exec 3<>/dev/tcp/${host}/${port}" 2>/dev/null; then
+            return 0
+        fi
+        (( attempt == attempts )) || sleep 1
+    done
+    return 1
+}
+
+container_age_seconds() {
+    local container_name="$1" grace="$2" started_at started_epoch now
+    started_at="$(docker inspect -f '{{.State.StartedAt}}' "$container_name" 2>/dev/null || true)"
+    started_epoch="$(date -d "$started_at" +%s 2>/dev/null || true)"
+    now="$(date +%s)"
+    if [[ "$started_epoch" =~ ^[0-9]+$ ]] && (( now >= started_epoch )); then
+        printf '%s' "$((now - started_epoch))"
+    else
+        # Unknown age must never extend startup grace indefinitely.
+        printf '%s' "$grace"
+    fi
+}
+
+evaluate_service_policy_once() {
+    local container_rows name state health
+    local service_id container_name owner lifecycle required_state docker_health
+    local probe_type probe_target grace attempts enforcement rationale age probe_rc
+    local persistent=0 transient=0 observed=0 passed=0
+    declare -A states=()
+    declare -A healths=()
+
+    container_rows="$(docker ps -a --format '{{.Names}}\t{{.State}}\t{{.HealthStatus}}')" || {
+        log "FAIL_PERSISTENT infrastructure docker-inventory-unavailable"
+        return 1
+    }
+    while IFS=$'\t' read -r name state health; do
+        [[ -n "$name" ]] || continue
+        states["$name"]="$state"
+        healths["$name"]="${health:-none}"
+    done <<<"$container_rows"
+
+    while IFS=$'\t' read -r service_id container_name owner lifecycle required_state docker_health probe_type probe_target grace attempts enforcement rationale; do
+        [[ -n "$service_id" && "$service_id" != \#* ]] || continue
+        if [[ ! "$grace" =~ ^[0-9]+$ || ! "$attempts" =~ ^[1-9][0-9]*$ ]]; then
+            log "FAIL_PERSISTENT service=${service_id} reason=invalid-policy-numeric-field"
+            persistent=1
+            continue
+        fi
+
+        state="${states[$container_name]:-missing}"
+        health="${healths[$container_name]:-none}"
+        age="$grace"
+        [[ "$state" == "missing" ]] || age="$(container_age_seconds "$container_name" "$grace")"
+
+        probe_rc=2
+        if [[ "$enforcement" == "required" && "$state" == "running" ]]; then
+            case "$probe_type" in
+                http) probe_rc=0; http_probe "$probe_target" "$attempts" || probe_rc=$? ;;
+                tcp) probe_rc=0; tcp_probe "$probe_target" "$attempts" || probe_rc=$? ;;
+                none|exception) probe_rc=2 ;;
+                *) probe_rc=2 ;;
+            esac
+        fi
+
+        rpi5_service_health_classify \
+            "$enforcement" "$required_state" "$docker_health" "$probe_type" \
+            "$state" "$health" "$age" "$grace" "$probe_rc"
+
+        log "${RPI5_HEALTH_CLASS} service=${service_id} owner=${owner} lifecycle=${lifecycle} container=${container_name} state=${state} health=${health} reason=${RPI5_HEALTH_REASON}"
+        case "$RPI5_HEALTH_CLASS" in
+            PASS) passed=$((passed + 1)) ;;
+            OBSERVE) observed=$((observed + 1)) ;;
+            TRANSIENT) transient=1 ;;
+            FAIL_PERSISTENT) persistent=1 ;;
+            *) persistent=1 ;;
+        esac
+    done <"$SERVICE_HEALTH_POLICY_FILE"
+
+    log "service-health summary pass=${passed} observe=${observed} transient=${transient} persistent=${persistent}"
+    (( persistent == 0 )) || return 1
+    (( transient == 0 )) || return 75
+    return 0
+}
+
+log "RPi5 monitor started"
 for unit in docker.service ssh.service cloudflared.service; do
     if systemctl is-active --quiet "$unit"; then
-        log "OK systemd $unit active"
+        log "PASS systemd ${unit} active"
     else
-        log "FAIL systemd $unit not active"
-        fail=1
+        log "FAIL_PERSISTENT systemd ${unit} not-active"
+        exit 1
     fi
 done
 
-container_rows="$(docker ps -a --format '{{.Names}}\t{{.State}}\t{{.HealthStatus}}')" || {
-    log "FAIL docker container inventory unavailable"
+max_grace="$(rpi5_service_health_policy_max_grace "$SERVICE_HEALTH_POLICY_FILE")" || {
+    log "FAIL_PERSISTENT service-health policy invalid"
     exit 1
 }
-container_rc=0
-rpi5_validate_required_container_inventory "$required_containers" "$container_rows" || container_rc=$?
-case "$container_rc" in
-    0) log "OK required Docker containers running/healthy" ;;
-    1)
-        fail=1
-        log "FAIL required Docker container state/health"
-        while IFS=$'\t' read -r name state health; do
-            [[ -n "$name" ]] || continue
-            log "FAIL container ${name}: state=${state} health=${health}"
-        done <<<"$RPI5_BAD_CONTAINERS"
-        ;;
-    2)
-        fail=1
-        log "FAIL required-container inventory is empty"
-        ;;
-    *)
-        fail=1
-        log "FAIL Docker health classification error rc=${container_rc}"
-        ;;
-esac
+monitor_start="$(date +%s)"
+deadline="$((monitor_start + max_grace))"
 
-LOCAL_TARGETS=(
-    "CV|http://127.0.0.1:8088/"
-    "Hermes Tech|http://127.0.0.1:8089/"
-)
+while true; do
+    policy_rc=0
+    evaluate_service_policy_once || policy_rc=$?
+    case "$policy_rc" in
+        0) break ;;
+        1)
+            log "RPi5 monitor FAIL_PERSISTENT"
+            exit 1
+            ;;
+        75)
+            now="$(date +%s)"
+            if (( now >= deadline )); then
+                log "FAIL_PERSISTENT transient deadline exhausted"
+                exit 1
+            fi
+            remaining="$((deadline - now))"
+            delay="$TRANSIENT_RETRY_DELAY"
+            (( remaining < delay )) && delay="$remaining"
+            log "TRANSIENT retry in ${delay}s"
+            sleep "$delay"
+            ;;
+        *)
+            log "FAIL_PERSISTENT unexpected policy classifier rc=${policy_rc}"
+            exit 1
+            ;;
+    esac
+done
+
+# Public route gates remain separate from container/application ownership policy.
 PUBLIC_TARGETS=(
     "CV|https://rozkalns.net/"
     "Hermes Tech|https://tech.rozkalns.net/"
@@ -103,34 +206,17 @@ PUBLIC_TARGETS=(
     "Hermes|https://hermes.rozkalns.net/"
 )
 
-for entry in "${LOCAL_TARGETS[@]}"; do
-    name="${entry%%|*}"
-    url="${entry#*|}"
-    code="000"
-    if code="$(rpi5_http_wait_reachable "$url" 3 2)"; then
-        log "OK local ${name}: HTTP ${code}"
-    else
-        fail=1
-        log "FAIL local ${name}: HTTP ${code}"
-    fi
-done
-
 for entry in "${PUBLIC_TARGETS[@]}"; do
     name="${entry%%|*}"
     url="${entry#*|}"
     code="000"
     if code="$(rpi5_http_wait_reachable "$url" 3 5)"; then
-        log "OK public ${name}: HTTP ${code}"
+        log "PASS public ${name}: HTTP ${code}"
     else
-        fail=1
-        log "FAIL public ${name}: HTTP ${code}"
+        log "FAIL_PERSISTENT public ${name}: HTTP ${code}"
+        exit 1
     fi
 done
 
-if (( fail == 0 )); then
-    log "RPi5 monitor PASS"
-    exit 0
-fi
-
-log "RPi5 monitor FAIL"
-exit 1
+log "RPi5 monitor PASS"
+exit 0
