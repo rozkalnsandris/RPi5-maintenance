@@ -8,7 +8,8 @@ GitHub is canonical for source/review/CI/continuity state. The live RPi5 is cano
 
 ## Current repository state
 
-- current `main`: `ab0254a32b566bd0874b9ae230c71795a7bead22`;
+- current `main` SHA is intentionally not stored in this handoff; resolve it fresh from the GitHub `main` branch before using this continuity state;
+- SHA values retained below are historical source/runtime identities and must not be interpreted as the current repository head unless freshly verified against GitHub;
 - open pull requests at the 2026-09-20 audit refresh: none;
 - issue #26 `/tmp` NVMe cutover: closed/completed;
 - issue #11 Docker image/build-cache retention: current maintenance-owned P1 continuation;
