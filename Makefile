@@ -35,6 +35,7 @@ test:
 	python3 ./tests/test-maintenance-shadow-verifier.py
 	python3 ./tests/test-maintenance-updater-telegram.py
 	bash ./tests/test-maintenance-health.sh
+	python3 ./tests/test-service-health-policy.py
 	bash ./tests/test-maintenance-health-entrypoints.sh
 	python3 ./tests/test-maintenance-telegram-credentials.py
 	bash ./tests/test-maintenance-systemd-units.sh

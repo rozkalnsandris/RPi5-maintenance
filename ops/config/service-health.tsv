@@ -1,0 +1,23 @@
+# schema_version=1
+# service_id	container_name	owner	lifecycle	required_state	docker_health	probe_type	probe_target	startup_grace_seconds	attempts	classification	rationale
+adguard	adguard	RPi5-maintenance	production	running	required	none	-	180	3	required	Docker health is authoritative; public reachability remains a separate route gate.
+autoheal	autoheal	RPi5-maintenance	production	running	required	none	-	120	3	required	Docker health is the bounded functional signal for the helper container.
+chromadb	chromadb	RPi5-maintenance	production	running	absent	exception	-	180	3	required	No stable unauthenticated application probe is canonicalized yet; process-only acceptance is prohibited until owner probe is defined.
+cv	cv	rozkalns_cv	production	running	absent	http	http://127.0.0.1:8088/	120	3	required	Local nginx HTTP gate proves the application serves content despite no Docker HEALTHCHECK.
+cvbot	cvbot	rozkalns_cv	production	running	required	none	-	180	3	required	Docker health is authoritative for the bot container.
+grafana	grafana	RPi5-maintenance	production	running	absent	http	https://grafana.rozkalns.net/	240	3	required	Public HTTP gate proves Grafana plus ingress; running alone is insufficient.
+grafana-renderer	grafana-renderer	RPi5-maintenance	production	running	required	none	-	180	3	required	Docker health is authoritative for the renderer.
+hermes-blog	hermes-blog	RPi5-maintenance	production	running	absent	http	http://127.0.0.1:8089/	120	3	required	Local HTTP gate proves the standalone nginx workload serves content.
+hermes-deals-api	hermes-deals-api-1	hermes-deals	production	running	required	none	-	180	3	observe	Service-specific repository owns mutation and health policy; maintenance consumes status as read-only evidence.
+hermes-deals-db	hermes-deals-db-1	hermes-deals	production	running	required	none	-	180	3	observe	Service-specific repository owns PostgreSQL health and mutation policy.
+hermes-deals-web	hermes-deals-web-1	hermes-deals	production	running	absent	http	http://127.0.0.1:9128/	120	3	observe	Local HTTP gate proves the production web frontend; owner remains hermes-deals.
+hermes-deals-preview-api	hermes-deals-ui-dev-9190-ui_dev_api-1	hermes-deals	preview	running	required	none	-	180	3	observe	Preview workload is explicitly non-production and must not become a maintenance failure gate.
+hermes-deals-preview-web	hermes-deals-ui-dev-9190-ui_dev_web-1	hermes-deals	preview	running	required	none	-	180	3	observe	Preview workload is explicitly non-production and must not become a maintenance failure gate.
+homeassistant	homeassistant	RPi5-maintenance	production	running	absent	http	https://ha.rozkalns.net/	300	5	required	Public HTTP gate is the canonical application-level proof for the host-network service.
+matter-server	matter-server	RPi5-maintenance	production	running	absent	exception	-	300	3	required	Matter protocol readiness needs an owner-specific functional probe; running-only acceptance is explicitly temporary and visible.
+mosquitto	mosquitto	RPi5-maintenance	production	running	absent	tcp	192.168.0.180:1883	120	3	required	TCP accept on the LAN listener is the bounded broker reachability gate; protocol auth is outside maintenance scope.
+node-exporter	node-exporter	RPi5-maintenance	production	running	absent	http	http://192.168.0.180:9100/metrics	120	3	required	Metrics HTTP response is the application-level gate.
+portainer	portainer	RPi5-maintenance	production	running	absent	http	https://portainer.rozkalns.net/	240	3	required	Public HTTP gate proves application plus ingress.
+prometheus	prometheus	RPi5-maintenance	production	running	absent	http	https://prometheus.rozkalns.net/	240	3	required	Public HTTP gate proves application plus ingress.
+weather	rozkalns-weather-public-weather-1	rozkalns_weather	production	running	required	none	-	300	3	observe	Weather is externally owned; maintenance reports its state but must not mutate or redefine its health policy.
+uptime-kuma	uptime-kuma	RPi5-maintenance	production	running	required	none	-	180	3	required	Docker health is authoritative; public route may be checked independently.
