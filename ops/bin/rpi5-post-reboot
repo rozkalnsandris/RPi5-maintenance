@@ -8,7 +8,8 @@ export LANG=C
 
 readonly MAINTENANCE_LIB_DIR="/usr/local/lib/rpi5-maintenance"
 readonly HEALTH_LIB="${MAINTENANCE_LIB_DIR}/rpi5-maintenance-health.sh"
-readonly REQUIRED_CONTAINERS_FILE="/etc/rpi5-maintenance/required-containers"
+readonly SERVICE_HEALTH_LIB="${MAINTENANCE_LIB_DIR}/rpi5-service-health.sh"
+readonly SERVICE_HEALTH_POLICY_FILE="/etc/rpi5-maintenance/service-health.tsv"
 readonly MAX_ATTEMPTS=30
 readonly RETRY_DELAY=10
 
@@ -30,38 +31,153 @@ require_root_controlled_file() {
     exit 1
 }
 
-require_root_controlled_file "$HEALTH_LIB" || {
-    echo "unsafe or missing health library: $HEALTH_LIB" >&2
-    exit 1
-}
+for runtime_file in "$HEALTH_LIB" "$SERVICE_HEALTH_LIB" "$SERVICE_HEALTH_POLICY_FILE"; do
+    require_root_controlled_file "$runtime_file" || {
+        echo "unsafe or missing health runtime file: $runtime_file" >&2
+        exit 1
+    }
+done
 # shellcheck source=/dev/null
 source "$HEALTH_LIB"
+# shellcheck source=/dev/null
+source "$SERVICE_HEALTH_LIB"
 
-require_root_controlled_file "$REQUIRED_CONTAINERS_FILE" || {
-    echo "unsafe or missing required-container inventory: $REQUIRED_CONTAINERS_FILE" >&2
-    exit 1
-}
-required_containers="$(cat "$REQUIRED_CONTAINERS_FILE")"
-
-for command_name in docker systemctl curl stat date sleep cat; do
+for command_name in docker systemctl curl stat date sleep timeout bash; do
     command -v "$command_name" >/dev/null 2>&1 || {
-        log "FAIL missing command: $command_name"
+        log "FAIL_PERSISTENT infrastructure missing-command=${command_name}"
         exit 1
     }
 done
 
+http_probe() {
+    local target="$1" attempts="$2" attempt code="000"
+    [[ "$attempts" =~ ^[1-9][0-9]*$ ]] || return 2
+    for ((attempt = 1; attempt <= attempts; attempt++)); do
+        code="$(curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 2 --max-time 3 "$target" 2>/dev/null || true)"
+        [[ "$code" =~ ^[0-9]{3}$ ]] || code="000"
+        rpi5_http_code_is_reachable "$code" && return 0
+        (( attempt == attempts )) || sleep 1
+    done
+    return 1
+}
+
+tcp_probe() {
+    local target="$1" attempts="$2" host port attempt
+    host="${target%:*}"
+    port="${target##*:}"
+    [[ "$host" =~ ^[A-Za-z0-9._-]+$ && "$port" =~ ^[0-9]+$ && "$attempts" =~ ^[1-9][0-9]*$ ]] || return 2
+    for ((attempt = 1; attempt <= attempts; attempt++)); do
+        if timeout 3 bash -c "exec 3<>/dev/tcp/${host}/${port}" 2>/dev/null; then
+            return 0
+        fi
+        (( attempt == attempts )) || sleep 1
+    done
+    return 1
+}
+
+container_age_seconds() {
+    local container_name="$1" grace="$2" started_at started_epoch now
+    started_at="$(docker inspect -f '{{.State.StartedAt}}' "$container_name" 2>/dev/null || true)"
+    started_epoch="$(date -d "$started_at" +%s 2>/dev/null || true)"
+    now="$(date +%s)"
+    if [[ "$started_epoch" =~ ^[0-9]+$ ]] && (( now >= started_epoch )); then
+        printf '%s' "$((now - started_epoch))"
+    else
+        # A present container with unknown age must not gain fresh startup grace.
+        printf '%s' "$grace"
+    fi
+}
+
+evaluate_service_policy_once() {
+    local container_rows name state health
+    local service_id container_name owner lifecycle required_state docker_health
+    local probe_type probe_target grace attempts enforcement rationale age probe_rc
+    local persistent=0 transient=0 observed=0 passed=0
+    declare -A states=()
+    declare -A healths=()
+
+    container_rows="$(docker ps -a --format '{{.Names}}\t{{.State}}\t{{.HealthStatus}}')" || {
+        log "FAIL_PERSISTENT infrastructure docker-inventory-unavailable"
+        return 1
+    }
+    while IFS=$'\t' read -r name state health; do
+        [[ -n "$name" ]] || continue
+        states["$name"]="$state"
+        healths["$name"]="${health:-none}"
+    done <<<"$container_rows"
+
+    while IFS=$'\t' read -r service_id container_name owner lifecycle required_state docker_health probe_type probe_target grace attempts enforcement rationale; do
+        [[ -n "$service_id" && "$service_id" != \#* ]] || continue
+        if [[ ! "$grace" =~ ^[0-9]+$ || ! "$attempts" =~ ^[1-9][0-9]*$ ]]; then
+            log "FAIL_PERSISTENT service=${service_id} reason=invalid-policy-numeric-field"
+            persistent=1
+            continue
+        fi
+
+        state="${states[$container_name]:-missing}"
+        health="${healths[$container_name]:-none}"
+        if [[ "$state" == "missing" ]]; then
+            # Missing immediately after boot is a bounded startup state. The
+            # same state remains fail-closed in the daily monitor because that
+            # caller supplies exhausted grace for unknown/missing runtime.
+            age=0
+        else
+            age="$(container_age_seconds "$container_name" "$grace")"
+        fi
+
+        probe_rc=2
+        if [[ "$enforcement" == "required" && "$state" == "running" ]]; then
+            case "$probe_type" in
+                http) probe_rc=0; http_probe "$probe_target" "$attempts" || probe_rc=$? ;;
+                tcp) probe_rc=0; tcp_probe "$probe_target" "$attempts" || probe_rc=$? ;;
+                none|exception) probe_rc=2 ;;
+                *) probe_rc=2 ;;
+            esac
+        fi
+
+        rpi5_service_health_classify \
+            "$enforcement" "$required_state" "$docker_health" "$probe_type" \
+            "$state" "$health" "$age" "$grace" "$probe_rc"
+
+        log "${RPI5_HEALTH_CLASS} service=${service_id} owner=${owner} lifecycle=${lifecycle} container=${container_name} state=${state} health=${health} reason=${RPI5_HEALTH_REASON}"
+        case "$RPI5_HEALTH_CLASS" in
+            PASS) passed=$((passed + 1)) ;;
+            OBSERVE) observed=$((observed + 1)) ;;
+            TRANSIENT) transient=1 ;;
+            FAIL_PERSISTENT) persistent=1 ;;
+            *) persistent=1 ;;
+        esac
+    done <"$SERVICE_HEALTH_POLICY_FILE"
+
+    log "service-health summary pass=${passed} observe=${observed} transient=${transient} persistent=${persistent}"
+    (( persistent == 0 )) || return 1
+    (( transient == 0 )) || return 75
+    return 0
+}
+
 check_ready_once() {
-    local unit rows rc code
+    local unit policy_rc code
 
     for unit in docker.service ssh.service cloudflared.service; do
-        systemctl is-active --quiet "$unit" || return 1
+        if ! systemctl is-active --quiet "$unit"; then
+            log "TRANSIENT systemd ${unit} not-active"
+            return 75
+        fi
     done
 
-    rows="$(docker ps -a --format '{{.Names}}\t{{.State}}\t{{.HealthStatus}}')" || return 1
-    rc=0
-    rpi5_validate_required_container_inventory "$required_containers" "$rows" || rc=$?
-    [[ "$rc" -eq 0 ]] || return 1
+    policy_rc=0
+    evaluate_service_policy_once || policy_rc=$?
+    case "$policy_rc" in
+        0) ;;
+        1) return 1 ;;
+        75) return 75 ;;
+        *)
+            log "FAIL_PERSISTENT unexpected service-health rc=${policy_rc}"
+            return 1
+            ;;
+    esac
 
+    # Public route gates remain a separate post-reboot dependency layer.
     for url in \
         http://127.0.0.1:8088/ \
         http://127.0.0.1:8089/ \
@@ -69,26 +185,59 @@ check_ready_once() {
         https://tech.rozkalns.net/ \
         https://hermes.rozkalns.net/; do
         code="$(rpi5_http_code "$url")"
-        rpi5_http_code_is_reachable "$code" || return 1
+        if ! rpi5_http_code_is_reachable "$code"; then
+            log "TRANSIENT post-reboot route=${url} http=${code}"
+            return 75
+        fi
     done
 
     return 0
 }
 
+max_grace="$(rpi5_service_health_policy_max_grace "$SERVICE_HEALTH_POLICY_FILE")" || {
+    log "FAIL_PERSISTENT service-health policy invalid"
+    exit 1
+}
+[[ "$max_grace" =~ ^[0-9]+$ ]] || {
+    log "FAIL_PERSISTENT service-health max grace invalid"
+    exit 1
+}
+start_epoch="$(date +%s)"
+deadline="$((start_epoch + max_grace))"
+
 log "RPi5 post-reboot verification started"
 for ((attempt = 1; attempt <= MAX_ATTEMPTS; attempt++)); do
-    if check_ready_once; then
-        log "RPi5 post-reboot PASS on attempt ${attempt}/${MAX_ATTEMPTS}"
-        exit 0
-    fi
-
-    if (( attempt < MAX_ATTEMPTS )); then
-        log "RPi5 post-reboot not ready (${attempt}/${MAX_ATTEMPTS}); retry in ${RETRY_DELAY}s"
-        sleep "$RETRY_DELAY"
-    fi
+    ready_rc=0
+    check_ready_once || ready_rc=$?
+    case "$ready_rc" in
+        0)
+            log "RPi5 post-reboot PASS on attempt ${attempt}/${MAX_ATTEMPTS}"
+            exit 0
+            ;;
+        1)
+            log "RPi5 post-reboot FAIL_PERSISTENT on attempt ${attempt}/${MAX_ATTEMPTS}"
+            break
+            ;;
+        75)
+            now="$(date +%s)"
+            if (( attempt >= MAX_ATTEMPTS || now >= deadline )); then
+                log "FAIL_PERSISTENT post-reboot startup grace exhausted"
+                break
+            fi
+            remaining="$((deadline - now))"
+            delay="$RETRY_DELAY"
+            (( remaining < delay )) && delay="$remaining"
+            log "RPi5 post-reboot TRANSIENT (${attempt}/${MAX_ATTEMPTS}); retry in ${delay}s"
+            sleep "$delay"
+            ;;
+        *)
+            log "FAIL_PERSISTENT unexpected readiness rc=${ready_rc}"
+            break
+            ;;
+    esac
 done
 
-log "RPi5 post-reboot FAIL after ${MAX_ATTEMPTS} attempts"
+log "RPi5 post-reboot FAIL"
 for unit in docker.service ssh.service cloudflared.service; do
     systemctl is-active "$unit" 2>/dev/null || true
 done
