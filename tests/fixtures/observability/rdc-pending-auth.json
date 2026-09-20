@@ -1,0 +1,28 @@
+{
+  "schema": "rpi5-observability-evidence.v1",
+  "now_epoch": 2000000,
+  "loop_threshold": 3,
+  "services": [
+    {
+      "manager": "user",
+      "unit": "remote-desktop-commander.service",
+      "active_state": "active",
+      "sub_state": "running",
+      "result": "success",
+      "restart_count": 0,
+      "activation_count": 1,
+      "readiness_required": true,
+      "evidence": [
+        "Found persisted session for device REDACTED",
+        "Failed to set session: Invalid Refresh Token: Already Used",
+        "Starting device authorization flow..."
+      ]
+    }
+  ],
+  "memory": {
+    "kernel_events": [],
+    "cgroups": [],
+    "user_space_events": []
+  },
+  "hermes": null
+}

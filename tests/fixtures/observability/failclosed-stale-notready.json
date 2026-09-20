@@ -1,0 +1,40 @@
+{
+  "schema": "rpi5-observability-evidence.v1",
+  "now_epoch": 2000000,
+  "services": [
+    {
+      "manager": "system",
+      "unit": "guard.service",
+      "active_state": "failed",
+      "sub_state": "failed",
+      "result": "exit-code",
+      "restart_count": 0,
+      "activation_count": 1,
+      "intentional_fail_closed": true,
+      "evidence": []
+    },
+    {
+      "manager": "system",
+      "unit": "stale.service",
+      "active_state": "active",
+      "sub_state": "exited",
+      "result": "success",
+      "restart_count": 0,
+      "activation_count": 1,
+      "last_failure_epoch": 1995000,
+      "evidence": []
+    },
+    {
+      "manager": "system",
+      "unit": "authless.service",
+      "active_state": "active",
+      "sub_state": "running",
+      "result": "success",
+      "restart_count": 0,
+      "activation_count": 1,
+      "readiness_required": true,
+      "evidence": []
+    }
+  ],
+  "memory": {"kernel_events": [], "cgroups": [], "user_space_events": []}
+}

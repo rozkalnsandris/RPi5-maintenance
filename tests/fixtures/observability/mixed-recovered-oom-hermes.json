@@ -1,0 +1,51 @@
+{
+  "schema": "rpi5-observability-evidence.v1",
+  "now_epoch": 2000000,
+  "loop_threshold": 3,
+  "hermes_late_threshold_seconds": 3600,
+  "services": [
+    {
+      "manager": "user",
+      "unit": "remote-desktop-commander.service",
+      "active_state": "active",
+      "sub_state": "running",
+      "result": "success",
+      "restart_count": 0,
+      "activation_count": 1,
+      "readiness_required": true,
+      "first_failure_epoch": 1999000,
+      "last_failure_epoch": 1999050,
+      "evidence": ["Session restored", "Channel subscribed", "Device ready"]
+    },
+    {
+      "manager": "system",
+      "unit": "example-loop.service",
+      "active_state": "active",
+      "sub_state": "running",
+      "result": "success",
+      "restart_count": 5,
+      "activation_count": 6,
+      "evidence": []
+    }
+  ],
+  "memory": {
+    "kernel_events": ["kernel: Out of memory: Killed process 123 (worker)"],
+    "cgroups": [
+      {"unit": "api.service", "oom": 1, "oom_kill": 1, "result": "oom-kill"}
+    ],
+    "user_space_events": [
+      "FATAL ERROR: Ineffective mark-compacts near heap limit Allocation failed - JavaScript heap out of memory",
+      "worker: MemoryError"
+    ]
+  },
+  "hermes": {
+    "doctor_ok": false,
+    "next_run_at": 1990000,
+    "executions": [
+      {"state": "failed", "delivery_state": "not-applicable"},
+      {"state": "success", "delivery_state": "failed"},
+      {"state": "unknown", "delivery_state": "not-applicable"},
+      {"state": "catch-up", "delivery_state": "success"}
+    ]
+  }
+}
