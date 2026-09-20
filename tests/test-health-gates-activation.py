@@ -48,6 +48,12 @@ required_markers = [
     "/run/lock/rpi5-update.lock",
     "/run/lock/rpi5-backup.lock",
     "/run/lock/rpi5-maintenance-exclusive.lock",
+    "validate_lock_path",
+    "verify_lock_availability",
+    "create_lock_file_if_missing",
+    "os.O_RDWR | os.O_CREAT | os.O_EXCL",
+    "os.O_NOFOLLOW",
+    "MUTATION_SCOPE=6-files plus-missing-lockfiles",
     "systemctl daemon-reload",
     "/usr/local/sbin/rpi5-monitor",
     "no automatic retry, rollback, cleanup, restart, or reboot",
@@ -57,14 +63,27 @@ required_markers = [
 for marker in required_markers:
     assert marker in text, marker
 
+assert 'unsafe/missing lock file:' not in text
+assert '[[ -e "$path" ]] || return 0' in text
+
+create_lock_block = re.search(r"create_lock_file_if_missing\(\) \{(.*?)\n\}", text, re.S)
+assert create_lock_block
+block = create_lock_block.group(1)
+assert block.index("MUTATION_STARTED=true") < block.index("python3 - \"$path\"")
+assert block.index("os.O_RDWR | os.O_CREAT | os.O_EXCL") < block.index("os.open(path, flags, 0o600)")
+assert block.index("raise SystemExit(17)") < block.index("require_root_file")
+
 preflight = text.index("if [[ \"$ACTION\" == '--preflight' ]]; then")
+initial_baseline = text.rindex("verify_runtime_baseline", 0, preflight)
+lock_probe = text.rindex("verify_lock_availability", 0, preflight)
 acquire = text.index("acquire_locks", preflight)
-mutation = text.index("MUTATION_STARTED=true", acquire)
-backup = text.index("install -d -o root -g root -m 0700", mutation)
+post_acquire_baseline = text.index("verify_runtime_baseline", acquire)
+backup_mutation = text.index("MUTATION_STARTED=true", post_acquire_baseline)
+backup = text.index("install -d -o root -g root -m 0700", backup_mutation)
 replace = text.index("mv -Tf --", backup)
 daemon_reload = text.index("systemctl daemon-reload", replace)
 monitor_verify = text.rindex("/usr/local/sbin/rpi5-monitor")
-assert preflight < acquire < mutation < backup < replace < daemon_reload < monitor_verify
+assert initial_baseline < lock_probe < preflight < acquire < post_acquire_baseline < backup_mutation < backup < replace < daemon_reload < monitor_verify
 
 assert len(re.findall(r"(?m)^systemctl daemon-reload$", text)) == 1
 assert text.count("/usr/local/sbin/rpi5-post-reboot") >= 2
