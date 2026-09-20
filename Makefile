@@ -47,6 +47,7 @@ test:
 	python3 ./tests/test-docker-retention-report.py
 	python3 ./tests/test-docker-retention-executor.py
 	python3 ./tests/test-docker-build-cache-policy.py
+	python3 ./tests/test-docker-retention-phase6-integration.py
 	python3 ./tests/test-observability-classifier.py
 	bash ./tests/test-maintenance-shared-lock.sh
 	python3 ./tests/test-maintenance-shared-lock-source.py

@@ -1,0 +1,171 @@
+#!/usr/bin/env bash
+# Reviewed production refresh operator for #11 Phase 6.
+# Installs staged retention tooling for an already-active systemd scheduler.
+# It never starts/restarts services, changes timers, runs cleanup, or prunes.
+set -Eeuo pipefail
+umask 077
+
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+export LC_ALL=C
+export LANG=C
+
+readonly MAIN_CONFIG="/etc/rpi-update.conf"
+readonly RETENTION_CONFIG_DIR="/etc/rpi5-maintenance"
+readonly RETENTION_CONFIG="${RETENTION_CONFIG_DIR}/docker-retention.conf"
+readonly RUNTIME_ROOT="/usr/local/lib/rpi5-maintenance"
+readonly RETENTION_ROOT="${RUNTIME_ROOT}/docker-retention"
+readonly LEGACY_V28_SHA256="3a7898c1f06f7bd5b4136dd6875edf5c7178dad9c8ea4099ef065ce9b1c20882"
+
+MODE="check"
+case "${1:-}" in
+    --check|"") MODE="check" ;;
+    --install) MODE="install" ;;
+    --verify) MODE="verify" ;;
+    *) echo "Usage: $0 [--check|--install|--verify]" >&2; exit 2 ;;
+esac
+[[ $# -le 1 ]] || { echo "Too many arguments" >&2; exit 2; }
+
+[[ ${EUID:-$(id -u)} -eq 0 ]] || {
+    echo "This operator must run as root." >&2
+    exit 1
+}
+
+repo="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+wrapper_src="${repo}/ops/bin/rpi5-update-scheduled"
+core_src="${repo}/ops/bin/rpi5-update"
+config_src="${repo}/ops/config/docker-retention.conf"
+
+bin_files=(
+    rpi5-docker-retention-report
+    rpi5-docker-retention-executor
+    rpi5-docker-build-cache-plan
+)
+lib_files=(
+    rpi5-docker-retention-inventory.py
+    rpi5-docker-retention-plan.py
+    rpi5-docker-retention-executor-core.py
+    rpi5-docker-build-cache-policy.py
+)
+
+log() { printf '[phase6-refresh] %s\n' "$*"; }
+fail() { log "FAIL: $*"; exit 1; }
+
+require_source_file() {
+    [[ -f "$1" && ! -L "$1" ]] || fail "missing/unsafe reviewed source: $1"
+}
+
+require_root_file() {
+    local path="$1" uid mode
+    [[ -f "$path" && ! -L "$path" ]] || return 1
+    uid="$(stat -c '%u' "$path")"
+    mode="$(stat -c '%a' "$path")"
+    [[ "$uid" -eq 0 ]] || return 1
+    (( (8#$mode & 022) == 0 ))
+}
+
+for path in "$wrapper_src" "$core_src" "$config_src"; do
+    require_source_file "$path"
+done
+for name in "${bin_files[@]}"; do require_source_file "${repo}/ops/bin/${name}"; done
+for name in "${lib_files[@]}"; do require_source_file "${repo}/ops/lib/${name}"; done
+
+require_root_file "$MAIN_CONFIG" || fail "unsafe/missing $MAIN_CONFIG"
+
+# Production is already on the systemd scheduler. Refresh must not be used as
+# the historical cron->systemd cutover.
+systemctl is-enabled --quiet rpi5-update.timer || fail "rpi5-update.timer is not enabled"
+systemctl is-active --quiet rpi5-update.timer || fail "rpi5-update.timer is not active"
+[[ "$(systemctl show rpi5-update.service -p ExecStart --value)" == *"/usr/local/sbin/rpi5-update"* ]] ||
+    fail "unexpected rpi5-update.service ExecStart"
+[[ "$(systemctl show rpi5-update.service -p ActiveState --value)" != "active" ]] ||
+    fail "rpi5-update.service is currently active"
+
+explicit_docker_cleanup="$(
+    awk -F= '
+        /^[[:space:]]*DOCKER_CLEANUP[[:space:]]*=/ {
+            value=$2
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
+            gsub(/^["\047]|["\047]$/, "", value)
+            print value
+            exit
+        }
+    ' "$MAIN_CONFIG"
+)"
+if [[ -n "$explicit_docker_cleanup" && "$explicit_docker_cleanup" != "no" ]]; then
+    fail "$MAIN_CONFIG explicitly sets DOCKER_CLEANUP=$explicit_docker_cleanup; change requires separate reviewed LIVE scope"
+fi
+
+repo_wrapper_sha="$(sha256sum "$wrapper_src" | awk '{print $1}')"
+live_wrapper_sha=""
+if [[ -f /usr/local/sbin/rpi5-update && ! -L /usr/local/sbin/rpi5-update ]]; then
+    live_wrapper_sha="$(sha256sum /usr/local/sbin/rpi5-update | awk '{print $1}')"
+fi
+if [[ "$MODE" != "verify" ]]; then
+    [[ "$live_wrapper_sha" == "$LEGACY_V28_SHA256" || "$live_wrapper_sha" == "$repo_wrapper_sha" ]] ||
+        fail "live updater identity is neither reviewed V28 nor this Phase 6 wrapper: $live_wrapper_sha"
+fi
+
+verify_installed() {
+    local src dst
+    require_root_file /usr/local/sbin/rpi5-update || fail "unsafe/missing installed wrapper"
+    [[ "$(sha256sum /usr/local/sbin/rpi5-update | awk '{print $1}')" == "$repo_wrapper_sha" ]] ||
+        fail "installed wrapper differs from reviewed source"
+
+    require_root_file "${RUNTIME_ROOT}/rpi5-update-v28-core" || fail "unsafe/missing installed V28 core"
+    [[ "$(sha256sum "${RUNTIME_ROOT}/rpi5-update-v28-core" | awk '{print $1}')" == "$LEGACY_V28_SHA256" ]] ||
+        fail "installed V28 core identity mismatch"
+
+    for name in "${bin_files[@]}"; do
+        src="${repo}/ops/bin/${name}"; dst="${RETENTION_ROOT}/bin/${name}"
+        require_root_file "$dst" || fail "unsafe/missing installed retention binary: $dst"
+        cmp -s -- "$src" "$dst" || fail "installed retention binary differs: $name"
+    done
+    for name in "${lib_files[@]}"; do
+        src="${repo}/ops/lib/${name}"; dst="${RETENTION_ROOT}/lib/${name}"
+        require_root_file "$dst" || fail "unsafe/missing installed retention library: $dst"
+        cmp -s -- "$src" "$dst" || fail "installed retention library differs: $name"
+    done
+
+    require_root_file "$RETENTION_CONFIG" || fail "unsafe/missing $RETENTION_CONFIG"
+    if [[ "$MODE" == "verify" ]]; then
+        log "VERIFY PASS: Phase 6 wrapper/tooling exact; scheduler unchanged."
+    fi
+}
+
+case "$MODE" in
+    check)
+        if [[ -e "$RETENTION_CONFIG" ]]; then
+            require_root_file "$RETENTION_CONFIG" || fail "existing retention config is unsafe"
+        fi
+        log "CHECK PASS: active scheduler baseline is eligible for a Phase 6 staged refresh."
+        ;;
+    install)
+        if [[ -e "$RETENTION_CONFIG" ]]; then
+            require_root_file "$RETENTION_CONFIG" || fail "existing retention config is unsafe"
+            cmp -s -- "$config_src" "$RETENTION_CONFIG" ||
+                fail "existing retention config differs; Phase 6 install will not overwrite policy"
+        fi
+
+        install -d -o root -g root -m 0755 "$RUNTIME_ROOT" "$RETENTION_ROOT" "$RETENTION_ROOT/bin" "$RETENTION_ROOT/lib"
+        install -d -o root -g root -m 0755 "$RETENTION_CONFIG_DIR"
+
+        # Config and dependencies first; scheduled entrypoint is replaced last.
+        if [[ ! -e "$RETENTION_CONFIG" ]]; then
+            install -o root -g root -m 0600 "$config_src" "$RETENTION_CONFIG"
+        fi
+        install -o root -g root -m 0750 "$core_src" "${RUNTIME_ROOT}/rpi5-update-v28-core"
+        for name in "${bin_files[@]}"; do
+            install -o root -g root -m 0750 "${repo}/ops/bin/${name}" "${RETENTION_ROOT}/bin/${name}"
+        done
+        for name in "${lib_files[@]}"; do
+            install -o root -g root -m 0644 "${repo}/ops/lib/${name}" "${RETENTION_ROOT}/lib/${name}"
+        done
+        install -o root -g root -m 0750 "$wrapper_src" /usr/local/sbin/rpi5-update
+
+        verify_installed
+        log "INSTALL PASS: files staged; timer/service were not restarted, reloaded, enabled or disabled."
+        ;;
+    verify)
+        verify_installed
+        ;;
+esac
