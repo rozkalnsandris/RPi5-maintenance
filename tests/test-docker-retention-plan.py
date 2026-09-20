@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 import subprocess
@@ -9,13 +10,13 @@ ROOT = Path(__file__).resolve().parents[1]
 PLANNER = ROOT / "ops/lib/rpi5-docker-retention-plan.py"
 
 
-def image_id(ch: str) -> str:
-    return "sha256:" + ch * 64
+def image_id(label: str) -> str:
+    return "sha256:" + hashlib.sha256(label.encode("utf-8")).hexdigest()
 
 
-def image(ch: str, age: int, repo: str | None, *, refs: list[str] | None = None, size: int = 100) -> dict:
+def image(label: str, age: int, repo: str | None, *, refs: list[str] | None = None, size: int = 100) -> dict:
     return {
-        "id": image_id(ch),
+        "id": image_id(label),
         "created_epoch": 2_000_000 - age,
         "size_bytes": size,
         "repositories": [] if repo is None else [repo],
@@ -79,8 +80,8 @@ def base_payload() -> dict:
     }
 
 
-def decision(result: dict, ch: str) -> dict:
-    return next(item for item in result["images"] if item["id"] == image_id(ch))
+def decision(result: dict, label: str) -> dict:
+    return next(item for item in result["images"] if item["id"] == image_id(label))
 
 
 def test_happy_path() -> None:
