@@ -42,6 +42,7 @@ test:
 	bash ./tests/test-maintenance-systemd-notify.sh
 	bash ./tests/test-maintenance-cleanup-policy.sh
 	python3 ./tests/test-maintenance-cleanup-source.py
+	python3 ./tests/test-docker-retention-plan.py
 	bash ./tests/test-maintenance-shared-lock.sh
 	python3 ./tests/test-maintenance-shared-lock-source.py
 	python3 ./tests/test-maintenance-lock-cutover.py
