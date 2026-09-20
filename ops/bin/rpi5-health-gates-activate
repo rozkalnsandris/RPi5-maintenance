@@ -1,0 +1,319 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+IFS=$'\n\t'
+umask 077
+PATH='/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
+export PATH
+
+readonly REPOSITORY='rozkalnsandris/RPi5-maintenance'
+readonly ORIGIN='https://github.com/rozkalnsandris/RPi5-maintenance.git'
+readonly RAW_ROOT='https://raw.githubusercontent.com/rozkalnsandris/RPi5-maintenance'
+readonly EXPECTED_HOST='rpi5'
+readonly BACKUP_ROOT='/var/lib/rpi5-maintenance/health-gates-activation'
+readonly UPDATE_LOCK='/run/lock/rpi5-update.lock'
+readonly BACKUP_LOCK='/run/lock/rpi5-backup.lock'
+readonly SHARED_LOCK='/run/lock/rpi5-maintenance-exclusive.lock'
+readonly LOCK_CONFLICT_RC=200
+
+readonly EXPECTED_PRE_MONITOR_SHA256='d16af598d02738cf9a4c11646577cea21e88c96d447e7566204fae37b1362166'
+readonly EXPECTED_PRE_POST_REBOOT_SHA256='ef59cb17ec1d8eae39aad4d503837444cd0bfdada5d3dd572bd1f6e44c230ada'
+readonly EXPECTED_PRE_COMPOSE_HEALTH_SHA256='36778bc5f36232d24f3c629a092b829b4e695a602c056ce01d9b62fda3e07814'
+readonly EXPECTED_PRE_MONITOR_SERVICE_SHA256='9af367a737eb0c148549c77ee79d87f2b16e4779817d50560af0e8d5c5502228'
+
+readonly -a SOURCE_REL=(
+    'ops/lib/rpi5-service-health.sh'
+    'ops/config/service-health.tsv'
+    'ops/lib/rpi5-update-compose-health.sh'
+    'ops/bin/rpi5-post-reboot'
+    'ops/bin/rpi5-monitor'
+    'ops/systemd/rpi5-monitor.service'
+)
+readonly -a DEST=(
+    '/usr/local/lib/rpi5-maintenance/rpi5-service-health.sh'
+    '/etc/rpi5-maintenance/service-health.tsv'
+    '/usr/local/lib/rpi5-maintenance/rpi5-update-compose-health.sh'
+    '/usr/local/sbin/rpi5-post-reboot'
+    '/usr/local/sbin/rpi5-monitor'
+    '/etc/systemd/system/rpi5-monitor.service'
+)
+readonly -a MODE=(0644 0644 0644 0750 0750 0644)
+readonly -a PRE_SHA=(
+    'MISSING'
+    'MISSING'
+    "$EXPECTED_PRE_COMPOSE_HEALTH_SHA256"
+    "$EXPECTED_PRE_POST_REBOOT_SHA256"
+    "$EXPECTED_PRE_MONITOR_SHA256"
+    "$EXPECTED_PRE_MONITOR_SERVICE_SHA256"
+)
+
+ACTION=''
+SOURCE_SHA=''
+MUTATION_STARTED=false
+STATE_DIR=''
+UPDATE_FD=''
+BACKUP_FD=''
+SHARED_FD=''
+
+log() { printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"; }
+fail() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
+sha256_file() { sha256sum "$1" | awk '{print $1}'; }
+
+usage() {
+    printf '%s\n' 'usage: rpi5-health-gates-activate --source-sha <40-hex-main-sha> --preflight|--apply'
+}
+
+while (( $# > 0 )); do
+    case "$1" in
+        --source-sha)
+            (( $# >= 2 )) || fail '--source-sha requires a value'
+            SOURCE_SHA="$2"
+            shift 2
+            ;;
+        --preflight|--apply)
+            [[ -z "$ACTION" ]] || fail 'choose exactly one action'
+            ACTION="$1"
+            shift
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            fail "unknown argument: $1"
+            ;;
+    esac
+done
+
+[[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || fail 'invalid --source-sha'
+[[ "$ACTION" == '--preflight' || "$ACTION" == '--apply' ]] || { usage >&2; exit 2; }
+
+require_root_file() {
+    local path="$1" uid mode
+    [[ -f "$path" && ! -L "$path" ]] || return 1
+    uid="$(stat -c '%u' "$path")"
+    mode="$(stat -c '%a' "$path")"
+    [[ "$uid" -eq 0 ]] && (( (8#$mode & 022) == 0 ))
+}
+
+require_root_dir() {
+    local path="$1" uid mode
+    [[ -d "$path" && ! -L "$path" ]] || return 1
+    uid="$(stat -c '%u' "$path")"
+    mode="$(stat -c '%a' "$path")"
+    [[ "$uid" -eq 0 ]] && (( (8#$mode & 022) == 0 ))
+}
+
+raw_url() {
+    local rel="$1"
+    printf '%s/%s/%s' "$RAW_ROOT" "$SOURCE_SHA" "$rel"
+}
+
+source_sha256() {
+    local rel="$1"
+    curl -fsSL --connect-timeout 5 --max-time 30 "$(raw_url "$rel")" | sha256sum | awk '{print $1}'
+}
+
+verify_remote_main_and_ci() {
+    local remote_sha
+    remote_sha="$(git ls-remote "$ORIGIN" refs/heads/main | awk 'NR==1{print $1}')"
+    [[ "$remote_sha" == "$SOURCE_SHA" ]] || fail "source SHA is not exact origin/main: remote=${remote_sha:-missing} requested=$SOURCE_SHA"
+
+    python3 - "$REPOSITORY" "$SOURCE_SHA" <<'PY'
+import json
+import sys
+import urllib.parse
+import urllib.request
+repo, sha = sys.argv[1:]
+query = urllib.parse.urlencode({
+    'branch': 'main',
+    'head_sha': sha,
+    'event': 'push',
+    'status': 'completed',
+    'per_page': 100,
+})
+url = f'https://api.github.com/repos/{repo}/actions/runs?{query}'
+req = urllib.request.Request(url, headers={'User-Agent': 'rpi5-health-gates-activate'})
+with urllib.request.urlopen(req, timeout=15) as response:
+    runs = json.load(response).get('workflow_runs', [])
+ok = [run for run in runs if run.get('name') == 'validate' and run.get('head_sha') == sha and run.get('conclusion') == 'success']
+if not ok:
+    raise SystemExit('no successful exact-main validate run')
+print(f'EXACT_MAIN_VALIDATE=PASS run={max(int(run["id"]) for run in ok)}')
+PY
+}
+
+assert_target_prestate() {
+    local index="$1" dest expected actual
+    dest="${DEST[$index]}"
+    expected="${PRE_SHA[$index]}"
+    if [[ "$expected" == 'MISSING' ]]; then
+        [[ ! -e "$dest" && ! -L "$dest" ]] || fail "pre-state drift: expected missing target exists: $dest"
+        return 0
+    fi
+    require_root_file "$dest" || fail "unsafe/missing pre-state target: $dest"
+    actual="$(sha256_file "$dest")"
+    [[ "$actual" == "$expected" ]] || fail "pre-state drift: $dest sha256=$actual expected=$expected"
+}
+
+assert_live_matches_source() {
+    local rel="$1" live="$2" source actual
+    require_root_file "$live" || fail "unsafe/missing prerequisite: $live"
+    source="$(source_sha256 "$rel")" || fail "cannot hash source prerequisite: $rel"
+    actual="$(sha256_file "$live")"
+    [[ "$actual" == "$source" ]] || fail "prerequisite drift: $live sha256=$actual source=$source"
+}
+
+assert_service_inactive() {
+    local unit="$1" state
+    state="$(systemctl is-active "$unit" 2>/dev/null || true)"
+    [[ "$state" != 'active' && "$state" != 'activating' && "$state" != 'deactivating' ]] || fail "$unit is not quiescent: $state"
+}
+
+verify_runtime_baseline() {
+    [[ "$(hostname -s)" == "$EXPECTED_HOST" ]] || fail "unexpected host: $(hostname -s)"
+    for command_name in awk bash cp curl date flock git grep hostname install mktemp mv python3 sha256sum stat systemctl; do
+        command -v "$command_name" >/dev/null 2>&1 || fail "required command missing: $command_name"
+    done
+    [[ ${EUID:-$(id -u)} -eq 0 ]] || fail 'run as root'
+
+    require_root_dir /usr/local/sbin || fail 'unsafe /usr/local/sbin'
+    require_root_dir /usr/local/lib/rpi5-maintenance || fail 'unsafe maintenance library directory'
+    require_root_dir /etc/rpi5-maintenance || fail 'unsafe /etc/rpi5-maintenance'
+    require_root_dir /etc/systemd/system || fail 'unsafe /etc/systemd/system'
+    require_root_dir /var/lib || fail 'unsafe /var/lib'
+
+    verify_remote_main_and_ci
+
+    local rel
+    for rel in "${SOURCE_REL[@]}"; do
+        curl -fsSL --connect-timeout 5 --max-time 30 "$(raw_url "$rel")" >/dev/null || fail "cannot fetch source artifact: $rel"
+    done
+
+    assert_live_matches_source 'ops/lib/rpi5-maintenance-health.sh' '/usr/local/lib/rpi5-maintenance/rpi5-maintenance-health.sh'
+    assert_live_matches_source 'ops/bin/rpi5-update' '/usr/local/lib/rpi5-maintenance/rpi5-update-v28-core'
+    assert_live_matches_source 'ops/systemd/rpi5-monitor.timer' '/etc/systemd/system/rpi5-monitor.timer'
+
+    local i
+    for i in "${!DEST[@]}"; do
+        assert_target_prestate "$i"
+    done
+
+    assert_service_inactive rpi5-monitor.service
+    assert_service_inactive rpi5-post-reboot.service
+    assert_service_inactive rpi5-update.service
+    [[ "$(systemctl is-enabled rpi5-monitor.timer 2>/dev/null || true)" == 'enabled' ]] || fail 'rpi5-monitor.timer is not enabled'
+    [[ "$(systemctl is-active rpi5-monitor.timer 2>/dev/null || true)" == 'active' ]] || fail 'rpi5-monitor.timer is not active'
+    [[ "$(systemctl is-enabled rpi5-update.timer 2>/dev/null || true)" == 'enabled' ]] || fail 'rpi5-update.timer is not enabled'
+    [[ "$(systemctl is-active rpi5-update.timer 2>/dev/null || true)" == 'active' ]] || fail 'rpi5-update.timer is not active'
+    systemctl show -p ExecStart --value rpi5-post-reboot.service | grep -Fq '/usr/local/sbin/rpi5-post-reboot' || fail 'post-reboot unit does not execute canonical path'
+    [[ ! -e /run/reboot-required ]] || fail '/run/reboot-required is present'
+}
+
+release_lock_var() {
+    local var="$1" fd="${!var:-}"
+    [[ -n "$fd" ]] || return 0
+    flock --unlock "$fd" 2>/dev/null || true
+    eval "exec ${fd}>&-"
+    printf -v "$var" '%s' ''
+}
+
+release_locks() {
+    release_lock_var SHARED_FD
+    release_lock_var BACKUP_FD
+    release_lock_var UPDATE_FD
+}
+
+acquire_existing_lock() {
+    local path="$1" result_var="$2" fd rc=0
+    require_root_file "$path" || fail "unsafe/missing lock file: $path"
+    exec {fd}<>"$path" || fail "cannot open lock file: $path"
+    flock --exclusive --nonblock --conflict-exit-code "$LOCK_CONFLICT_RC" "$fd" || rc=$?
+    if (( rc != 0 )); then
+        eval "exec ${fd}>&-"
+        [[ "$rc" -eq "$LOCK_CONFLICT_RC" ]] && fail "maintenance lock busy: $path"
+        fail "maintenance lock acquisition error rc=$rc path=$path"
+    fi
+    printf -v "$result_var" '%s' "$fd"
+}
+
+acquire_locks() {
+    acquire_existing_lock "$UPDATE_LOCK" UPDATE_FD
+    acquire_existing_lock "$BACKUP_LOCK" BACKUP_FD
+    acquire_existing_lock "$SHARED_LOCK" SHARED_FD
+}
+
+on_exit() {
+    local rc=$?
+    trap - EXIT
+    release_locks
+    if (( rc != 0 )) && [[ "$MUTATION_STARTED" == true ]]; then
+        printf 'STOP: health-gates activation failed after host mutation began; no automatic retry, rollback, cleanup, restart, or reboot was attempted.\n' >&2
+        printf 'PRESERVED_STATE_DIR=%s\n' "${STATE_DIR:-not-created}" >&2
+    fi
+    exit "$rc"
+}
+trap on_exit EXIT
+
+verify_runtime_baseline
+
+if [[ "$ACTION" == '--preflight' ]]; then
+    printf 'HEALTH_GATES_PREFLIGHT=PASS source_sha=%s\n' "$SOURCE_SHA"
+    printf 'MUTATION_SCOPE=6-files daemon-reload-only no-service-restart no-reboot\n'
+    exit 0
+fi
+
+acquire_locks
+verify_runtime_baseline
+
+MUTATION_STARTED=true
+STATE_DIR="${BACKUP_ROOT}/$(date -u '+%Y%m%dT%H%M%SZ')-${SOURCE_SHA:0:12}"
+install -d -o root -g root -m 0700 "$STATE_DIR"
+printf '%s\n' "$SOURCE_SHA" >"${STATE_DIR}/source-sha"
+chmod 0600 "${STATE_DIR}/source-sha"
+
+for i in "${!DEST[@]}"; do
+    dest="${DEST[$i]}"
+    backup_name="$(printf '%s' "$dest" | sed 's#^/##; s#/#__#g')"
+    if [[ -e "$dest" || -L "$dest" ]]; then
+        cp -a -- "$dest" "${STATE_DIR}/${backup_name}"
+    else
+        : >"${STATE_DIR}/${backup_name}.MISSING"
+        chmod 0600 "${STATE_DIR}/${backup_name}.MISSING"
+    fi
+done
+
+for i in "${!DEST[@]}"; do
+    rel="${SOURCE_REL[$i]}"
+    dest="${DEST[$i]}"
+    mode="${MODE[$i]}"
+    stage="$(mktemp "${dest}.health-gates-stage.XXXXXX")"
+    curl -fsSL --connect-timeout 5 --max-time 30 "$(raw_url "$rel")" >"$stage"
+    chown root:root "$stage"
+    chmod "$mode" "$stage"
+    mv -Tf -- "$stage" "$dest"
+done
+
+systemctl daemon-reload
+
+for i in "${!DEST[@]}"; do
+    expected="$(source_sha256 "${SOURCE_REL[$i]}")"
+    require_root_file "${DEST[$i]}" || fail "installed target unsafe/missing: ${DEST[$i]}"
+    actual="$(sha256_file "${DEST[$i]}")"
+    [[ "$actual" == "$expected" ]] || fail "installed target hash mismatch: ${DEST[$i]}"
+done
+
+assert_live_matches_source 'ops/lib/rpi5-maintenance-health.sh' '/usr/local/lib/rpi5-maintenance/rpi5-maintenance-health.sh'
+assert_live_matches_source 'ops/bin/rpi5-update' '/usr/local/lib/rpi5-maintenance/rpi5-update-v28-core'
+assert_live_matches_source 'ops/systemd/rpi5-monitor.timer' '/etc/systemd/system/rpi5-monitor.timer'
+assert_service_inactive rpi5-post-reboot.service
+assert_service_inactive rpi5-update.service
+[[ "$(systemctl is-enabled rpi5-monitor.timer 2>/dev/null || true)" == 'enabled' ]] || fail 'rpi5-monitor.timer lost enabled state'
+[[ "$(systemctl is-active rpi5-monitor.timer 2>/dev/null || true)" == 'active' ]] || fail 'rpi5-monitor.timer lost active state'
+[[ "$(systemctl is-enabled rpi5-update.timer 2>/dev/null || true)" == 'enabled' ]] || fail 'rpi5-update.timer lost enabled state'
+[[ "$(systemctl is-active rpi5-update.timer 2>/dev/null || true)" == 'active' ]] || fail 'rpi5-update.timer lost active state'
+
+/usr/local/sbin/rpi5-monitor
+
+printf 'HEALTH_GATES_ACTIVATION=PASS source_sha=%s state_dir=%s\n' "$SOURCE_SHA" "$STATE_DIR"
+printf '%s\n' 'ROLLBACK=not-automatic; fresh explicit authorization must restore preserved backups/delete .MISSING targets and run systemctl daemon-reload'
+printf '%s\n' 'REBOOT_REQUIRED=no'
