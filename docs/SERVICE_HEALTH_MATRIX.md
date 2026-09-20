@@ -14,7 +14,7 @@ A container with no Docker `HEALTHCHECK` is never considered application-healthy
 
 ## Startup and failure model
 
-The next monitor integration phase must classify health as:
+Runtime health consumers classify health as:
 
 - `PASS`: required state and required Docker/application gate passed;
 - `TRANSIENT`: service is inside its declared startup grace and has not exhausted retry budget;
@@ -23,7 +23,7 @@ The next monitor integration phase must classify health as:
 
 `starting` is therefore not silently accepted and not immediately treated as a persistent outage. Once startup grace or retries are exhausted it becomes `FAIL_PERSISTENT`.
 
-Infrastructure failure such as Docker inventory failure or `/tmp` exhaustion is a separate fail-closed class: the monitor must not reinterpret missing health evidence as a clean application state.
+Infrastructure failure such as Docker inventory failure or `/tmp` exhaustion is a separate fail-closed class: maintenance must not reinterpret missing health evidence as a clean application state.
 
 ## Current runtime snapshot
 
@@ -31,8 +31,12 @@ The 2026-09-20 read-only inventory found 21 running containers. `tests/fixtures/
 
 Two Hermes Deals `ui-dev-9190` containers are explicitly `preview`, not production gates. `rozkalns-weather-public-weather-1` is production but owned by `rozkalns_weather`; maintenance may observe its Docker health but must not redefine or mutate its service health policy.
 
+A bounded 2026-09-20 updater-convergence preflight also confirmed that the maintenance `main` Compose project contains `mosquitto`, `node-exporter`, `portainer`, `grafana-renderer`, `grafana`, `homeassistant`, `prometheus`, `uptime-kuma`, `adguard`, `autoheal`, `chromadb`, and `matter-server`, while the `cv` project contains `cvbot` and `cv`. These 14 service IDs and their actual container names map 1:1 to canonical policy rows; external-owner `observe` workloads are not members of these two updater-owned Compose scopes.
+
 ## Convergence contract
 
-Maintenance Docker convergence must consume this same ownership model rather than creating a second implicit list of what `running` means. `docker compose up -d --wait` remains a convergence mechanism, not sufficient application-health proof for services without meaningful healthchecks.
+Maintenance Docker convergence consumes this same ownership model rather than creating a second implicit list of what `running` means. `rpi5-update-compose-health.sh` keeps Compose completeness fail-closed, then evaluates only the current project's expected service IDs through `rpi5-service-health.sh` and `service-health.tsv`. A project service without exactly one canonical policy row is a convergence failure. Required Docker health and HTTP/TCP probes are enforced with the declared startup grace and retry budget; explicit exceptions remain visible `OBSERVE` debt rather than implicit PASS.
 
-The source policy does not deploy healthchecks, restart containers, recreate services, change ingress or alter systemd. Any live activation of monitor/policy files or service-level healthcheck change is a separate LIVE gate.
+`docker compose up -d --wait` remains a convergence mechanism, not sufficient application-health proof for services without meaningful healthchecks. The V28 updater binary itself remains byte-identical; its existing `check_project_runtime()` calls consume the strengthened helper for preflight, post-reconcile, rollback readiness and final health evidence.
+
+The source policy does not deploy healthchecks, restart containers, recreate services, change ingress or alter systemd. Any live activation of the updated convergence helper, classifier/policy files, monitor/post-reboot files, or service-level healthcheck change is a separate LIVE gate.
