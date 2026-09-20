@@ -8,7 +8,7 @@ GitHub is canonical for source/review/CI/continuity state. The live RPi5 is cano
 
 ## Current repository state
 
-- current `main`: `756319db3b347d0d1c8c366eb3e343cbde6cfbbf`;
+- current `main`: `ab0254a32b566bd0874b9ae230c71795a7bead22`;
 - open pull requests at the 2026-09-20 audit refresh: none;
 - issue #26 `/tmp` NVMe cutover: closed/completed;
 - issue #11 Docker image/build-cache retention: current maintenance-owned P1 continuation;
@@ -31,7 +31,7 @@ Issue #11 has advanced beyond the historical Phase 1/2 source-only state. Review
 5. BuildKit/buildx cache planner PR #52;
 6. staged production integration PR #53;
 7. untagged/container-referenced inventory fix PR #54;
-8. zero-target executor dry-run fix PR #55, merged as current `main` `756319db3b347d0d1c8c366eb3e343cbde6cfbbf`.
+8. zero-target executor dry-run fix PR #55, merged as source baseline `756319db3b347d0d1c8c366eb3e343cbde6cfbbf`.
 
 Privileged production proof against exact current source passed:
 
