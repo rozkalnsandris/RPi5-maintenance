@@ -121,26 +121,44 @@ The policy currently sees newer pulled registry images pending for `autoheal`, `
 
 Issue **#32** is closed as completed after the verified Home Assistant reconciliation.
 
-## Current lane — post-cutover stability proof
+## 2026-09-20 stable-production proof
 
-The immediate lane remains **read-only post-cutover stability proof**. Do not start P2/P3 behavior changes or remove duplicated maintenance source from `RPi5_main` inside this lane.
+The normal scheduled maintenance run `20260920_022000` completed successfully under the reviewed V28 policy and exercised the natural `if-needed` reboot path.
 
-The purpose remains to prove the installed `0.2.0` control-plane stable under normal scheduled operation before migration cleanup. The 2026-09-13 run exercised the V28 failure-domain evidence and fail-closed behavior successfully, but the run itself failed; therefore it cannot be used as stable-production proof.
+Fresh read-only evidence collected after the run and reboot showed:
+
+- `rpi5-update.service`: `Result=success`, `ExecMainStatus=0`;
+- evidence directory `/var/log/rpi5-maintenance/20260920_022000` present with V28 run-scoped Docker evidence;
+- main Docker `pull`, `target-selection`, and `reconcile`: `outcome=succeeded`, `rc=0`, `mutation=changed`;
+- main Docker `final-health`: `outcome=healthy`, `rc=0`;
+- CV Docker `pull`, `target-selection`, and `reconcile`: `outcome=succeeded`, `rc=0`, `mutation=none`;
+- CV Docker `final-health`: `outcome=healthy`, `rc=0`;
+- final main/CV evidence lists all expected containers running, with healthcheck-equipped containers healthy;
+- APT simulation reported `20` upgradable and `0` removable packages, followed by the reviewed safe `upgrade --with-new-pkgs --no-remove` path;
+- rclone remained APT/dpkg-managed;
+- cleanup remained under the reviewed 14-day policy; autoremove candidates were informational only and were not deleted automatically;
+- Hermes remained manual-only; the run reported `12137` commits behind `origin/main` and performed no Hermes update;
+- kernel/firmware package change triggered the reviewed automatic `if-needed` reboot;
+- after reboot `/run/reboot-required` is absent;
+- `rpi5-update.timer` is `enabled/active`, next scheduled elapse `2026-09-27 02:20 CEST`;
+- `rpi5-post-reboot.service`: `Result=success`, `ExecMainStatus=0`, readiness PASS on attempt `2/30`;
+- systemd triggered `OnSuccess=` and started `rpi5-maintenance-notify@success-rpi5-post-reboot.service`; the notifier completed successfully;
+- the prior `unknown`/trigger-source ambiguity did not recur;
+- installed production hashes still match the reviewed V28 updater/helper and PR #7 notifier/service identities recorded above.
+
+This establishes stable-production proof for the installed `0.2.0` maintenance control-plane plus the reviewed PR #7 notifier hotfix. No manual maintenance run or manufactured reboot was used to establish this proof.
+
+## Current lane — Phase 9 duplicated maintenance-source cleanup
+
+Issue **#24** is now the active continuation lane. The stable-production prerequisite is satisfied; the issue remains open for the actual Phase 9 cleanup work.
 
 Current gate:
 
-1. Preserve the exact production identity above as the cutover baseline, including the separately reviewed PR #7 notifier hotfix identity.
-2. Do not manually run full maintenance or `rpi5-post-reboot.service` merely to manufacture stability evidence; either manual run requires separate LIVE authorization.
-3. The next normal `rpi5-update.timer` run is scheduled for **2026-09-20 02:20 CEST**. After that run, collect minimum read-only evidence for:
-   - updater run result and exit status;
-   - V28 run-scoped Docker evidence presence/shape when Docker phases execute;
-   - main/CV Compose runtime health;
-   - relevant local/public health gates if the run touched them;
-   - timer/service state;
-   - reboot-required/result state;
-   - any failure-domain behavior actually exercised;
-   - if a reboot/post-reboot path actually occurs, the corrected notifier result and absence of the prior trigger-source ambiguity.
-4. If that scheduled run is healthy, record stable-production proof in canonical continuity.
-5. Only after stable operation may Phase 9 removal of duplicated maintenance source from `RPi5_main` be considered.
+1. Inventory only duplicated maintenance source/policy remaining in `RPi5_main` whose canonical ownership is now `RPi5-maintenance`.
+2. Identify systemd `Documentation=`/operator docs/provenance pointers that still reference predecessor ownership.
+3. Prove from source and minimum read-only runtime evidence that no active deployment/runtime path depends on files proposed for removal.
+4. Prepare the smallest coherent reviewed source PR(s), preserving rollback/recovery documentation.
+5. Merge remains separately owner-gated.
+6. Any live removal/deployment/systemd/filesystem mutation remains separately LIVE-gated.
 
 P2 transaction classification/continuation and P3 doctor/backoff remain separate later behavior milestones and require their own scoped work items.
