@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -65,6 +66,22 @@ for marker in required_markers:
 
 assert 'unsafe/missing lock file:' not in text
 assert '[[ -e "$path" ]] || return 0' in text
+
+release_lock_block = re.search(r"release_lock_var\(\) \{(.*?)\n\}", text, re.S)
+assert release_lock_block
+release_function = "release_lock_var() {" + release_lock_block.group(1) + "\n}"
+assert '${!var:-}' not in release_function
+assert 'fd="${!var}"' in release_function
+subprocess.run(
+    [
+        "bash",
+        "-c",
+        "set -Eeuo pipefail\n"
+        + release_function
+        + "\nEMPTY_FD=''\nrelease_lock_var EMPTY_FD\n[[ -z \"$EMPTY_FD\" ]]\n",
+    ],
+    check=True,
+)
 
 create_lock_block = re.search(r"create_lock_file_if_missing\(\) \{(.*?)\n\}", text, re.S)
 assert create_lock_block
