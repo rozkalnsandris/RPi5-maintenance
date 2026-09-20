@@ -88,8 +88,6 @@ def validate_reviewed_plan(plan: dict[str, Any], requested_ids: list[str]) -> di
     if delete_ids != sorted(set(delete_ids)):
         raise ExecutorError("planner result delete_ids must be unique and sorted")
 
-    if not requested_ids:
-        raise ExecutorError("at least one explicit delete id is required")
     requested = [require_image_id(item, "requested delete id") for item in requested_ids]
     if requested != list(dict.fromkeys(requested)):
         raise ExecutorError("requested delete ids must be unique")
