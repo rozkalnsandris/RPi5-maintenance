@@ -2,11 +2,11 @@
 
 ## Current state
 
-`RPi5-maintenance` is the independent maintenance source/control-plane repository.
+`rpi5-maintenance` is the independent maintenance source repository. P1/V28 Docker evidence hardening, the release/shadow gate and the V28 production-activation operator are merged on `main`.
 
 GitHub release/tag **`0.2.0`** remains bound to exact release commit `7a5685908e06cc35aa4bb623dd9fa6a3081c4416` (tree `3e6ef8913b64a48d5eb3ba90f13c74c5a7083d67`). The separately authorized production activation completed successfully on 2026-09-06 using the reviewed operator from `main` commit `a0daa87cbd6a34a1f4a49648798c45587cdf43de`.
 
-Production runs the exact V28 updater/helper identities from release `0.2.0` plus the separately reviewed PR #7 post-reboot notifier hotfix. Stable-production proof was established by the normal scheduled maintenance run `20260920_022000` and its natural reboot/post-reboot path.
+Production now runs the exact V28 updater/helper identities from release `0.2.0`. Release publication itself did not authorize production; the one-time LIVE activation authorization was consumed by the successful `--apply`.
 
 ## Exact production identity
 
@@ -16,30 +16,112 @@ Production runs the exact V28 updater/helper identities from release `0.2.0` plu
 - activation operator SHA256: `0384eb3b544883a1e979c7711cde351cd5597c28819054d07406e2bf770f959a`;
 - activation operator Git blob: `be0473e43d37271096a0461df2780f9e62effb67`;
 - `/usr/local/sbin/rpi5-update` SHA256: `3a7898c1f06f7bd5b4136dd6875edf5c7178dad9c8ea4099ef065ce9b1c20882`, owner/mode `root:root 0750`;
-- `/usr/local/lib/rpi5-maintenance/rpi5-update-compose-policy.sh` SHA256: `5ee19cbf09f5fa06853d1c121fea8216e1ae245aaa17af81e2affe6ab3aaae4f`, owner/mode `root:root 0644`;
-- `/usr/local/lib/rpi5-maintenance/rpi5-update-docker-evidence.sh` SHA256: `f133adb38eb5499e1e582532f142f1b892ba99755262ce0612d8b21e96716456`, owner/mode `root:root 0644`;
-- `/usr/local/sbin/rpi5-maintenance-notify` SHA256: `46241a4c73245379de53844fc148d38bab558337845f41911012a04ffeb58703`, owner/mode `root:root 0755`;
-- `/etc/systemd/system/rpi5-post-reboot.service` SHA256: `467e1c0b5825e62bbd9eee7fce1df4d4f7b33ca88bd4e90b9be13cf7135f606c`, owner/mode `root:root 0644`;
+- `rpi5-update-compose-policy.sh` SHA256: `5ee19cbf09f5fa06853d1c121fea8216e1ae245aaa17af81e2affe6ab3aaae4f`, owner/mode `root:root 0644`;
+- `rpi5-update-docker-evidence.sh` SHA256: `f133adb38eb5499e1e582532f142f1b892ba99755262ce0612d8b21e96716456`, owner/mode `root:root 0644`;
 - exact release-commit `validate` push CI run `34023964012`: SUCCESS;
 - activation-operator merged-main `validate` push CI run `34025290660`: SUCCESS.
 
-## Activation and notifier continuity
+## Activation evidence
 
-The 2026-09-06 activation established V28 production identity without APT, Docker, systemd, cleanup or reboot mutation outside the reviewed activation itself. Root-only activation evidence remains under `/root/rpi5-v28-activation-20260906-115620.8f7xwf`.
+The authorized root `--apply` completed with:
 
-On 2026-09-07 the boot-time `rpi5-post-reboot.service` itself succeeded, but its notification incorrectly reported a failure with `unknown` monitor metadata because the same notifier instance had been configured for both `OnSuccess=` and `OnFailure=`.
+- `V28_ACTIVATION_PREFLIGHT=PASS`;
+- predecessor updater SHA256 `f9c83acdd72131d6b696900972aa11d24978645b931846ff4ea8e6a8ed80bdc2`;
+- `V28_HOST_ACTIVATION=PASS`;
+- `V28_NON_MUTATING_APT_CHECK=PASS`;
+- identical APT-list fingerprints before/after the staged check: `37c0274e1f63e4680336e4a7b96279b74ddde31b4e859e77f1a08de49c860d04`;
+- `MAINTENANCE_BOUNDARIES_UNCHANGED=PASS`;
+- root-only evidence directory `/root/rpi5-v28-activation-20260906-115620.8f7xwf` preserved and present.
 
-PR **#7** fixed that ambiguity by using distinct success/failure notifier instances and an instance-name fallback in `rpi5-maintenance-notify`. PR #7 merged as `115a8162ed650e7b153124b49be30f499d4af47f`; exact PR head `88b143b3faef6b8ebd5f4e6c668b4b9116b1720a` passed `validate` run `34147197655`. A separately authorized LIVE deployment installed only that reviewed notifier fix plus `systemctl daemon-reload`.
+No APT mutation, Docker mutation, systemd mutation, cleanup or reboot was part of this activation.
+
+## Fresh post-activation runtime evidence
+
+Read-only verification after activation showed:
+
+- source checkout clean on exact current `main` `a0daa87cbd6a34a1f4a49648798c45587cdf43de`;
+- the three production file hashes above match exact V28 release identities;
+- `rpi5-update.timer`: `enabled/active`;
+- `rpi5-monitor.timer`: `enabled/active`;
+- `docker.service`: `active`;
+- main Compose: no bad containers;
+- CV Compose: no bad containers;
+- no active matching maintenance locks observed;
+- `/run/reboot-required`: absent;
+- historical `rpi5-update.service=failed` remains intentionally uncleared from the 2026-09-06 pre-V28 incident and is not evidence of activation failure.
+
+## Post-reboot notifier incident and live fix
+
+On 2026-09-07 the normal boot-time `rpi5-post-reboot.service` completed successfully (`Result=success`, `ExecMainStatus=0`, readiness PASS on attempt 3/30), but its Telegram notification incorrectly reported a maintenance failure with `unknown` monitor metadata. Read-only journal evidence showed systemd skipped monitor-result propagation because the same notifier instance had been configured for both `OnSuccess=` and `OnFailure=`.
+
+PR **#7** fixed the ambiguity by using distinct success/failure notifier instances and adding an instance-name fallback in `rpi5-maintenance-notify`. PR #7 merged to `main` as `115a8162ed650e7b153124b49be30f499d4af47f`; exact PR head `88b143b3faef6b8ebd5f4e6c668b4b9116b1720a` passed `validate` run `34147197655`.
+
+A separately authorized LIVE deployment on 2026-09-07 installed only the reviewed notifier fix plus `systemctl daemon-reload`; no service restart, manual maintenance run, cleanup or reboot was performed. Fresh live evidence after deployment:
+
+- `/etc/systemd/system/rpi5-post-reboot.service` SHA256 `467e1c0b5825e62bbd9eee7fce1df4d4f7b33ca88bd4e90b9be13cf7135f606c`, owner/mode `root:root 0644`;
+- `/usr/local/sbin/rpi5-maintenance-notify` SHA256 `46241a4c73245379de53844fc148d38bab558337845f41911012a04ffeb58703`, owner/mode `root:root 0755`;
+- effective `OnSuccess=rpi5-maintenance-notify@success-rpi5-post-reboot.service`;
+- effective `OnFailure=rpi5-maintenance-notify@failure-rpi5-post-reboot.service`;
+- notifier `bash -n`: PASS;
+- `rpi5-post-reboot.service`: loaded/enabled, last result remains `success`, `ExecMainStatus=0`;
+- `rpi5-update.timer` and `rpi5-monitor.timer`: active/waiting;
+- no relevant failed maintenance units observed;
+- `/run/reboot-required`: absent.
+
+A non-root `systemd-analyze verify` returned `rc=1` because `/usr/local/sbin/rpi5-post-reboot` is intentionally `root:root 0750`, so the unprivileged verifier reported `Permission denied`; it also surfaced an unrelated `dashboard-rpi5-terminal.socket` warning. No retry or corrective LIVE mutation was performed. The system manager itself has loaded the reviewed unit and resolves the two distinct notifier dependencies as shown above.
+
+This records the fix deployment only. It is **not** stable-production proof: the corrected post-reboot notification path has not been manually triggered after deployment, and manual execution remains outside this lane without a new LIVE authorization.
 
 ## 2026-09-13 scheduled-run outcome
 
-The first normal scheduled stability-proof run after cutover, run id `20260913_022000`, did **not** establish stable-production proof.
+The first normal scheduled stability-proof run after cutover, run id `20260913_022000`, **did not establish stable-production proof**.
 
-The run exercised intended V28 fail-closed behavior: APT succeeded, Docker main pull changed images, and target selection stopped on `reason=config-drift`, `service=homeassistant`, `rc=3`. Docker CV was skipped; final main/CV health and local/public endpoint gates remained healthy; automatic reboot was blocked. Issue **#32** captured the incident.
+Fresh read-only evidence showed:
 
-The owner later performed the narrow Home Assistant reconciliation documented in #32. Fresh read-only evidence then showed running/local Home Assistant image and Compose config hashes converged, local endpoint HTTP 200, public endpoint HTTP 302, main/CV runtime healthy, `/run/reboot-required` absent, and the V28 selection blocker cleared. Issue #32 is closed.
+- `rpi5-update.service`: `Result=exit-code`, `ExecMainStatus=1`;
+- cleanup: PASS, 14-day retention, reported 164 MB delta;
+- APT: 9 packages upgraded successfully;
+- Docker main pull: succeeded with `mutation=changed`;
+- Docker main target selection: failed closed with `rc=3`, `reason=config-drift`, `service=homeassistant`;
+- Docker CV: skipped because main failed;
+- main and CV final-health checks: healthy;
+- local/public endpoint gates: PASS;
+- automatic reboot: blocked because the run had an error;
+- `/run/reboot-required`: absent after the run;
+- `rpi5-update.timer`: active/waiting for the next normal run.
 
-## Stable-production proof — 2026-09-20
+The failure was intended V28 safety behavior, not evidence to weaken the guard: a registry image had changed while the running Home Assistant container's `com.docker.compose.config-hash` differed from the current rendered Compose hash. Issue **#32** captured the incident and remediation evidence.
+
+## Home Assistant reconciliation
+
+On 2026-09-13 the owner manually executed the narrowly scoped reconciliation documented in #32:
+
+```sh
+cd /home/andris/docker
+docker compose up -d --pull never --no-build --wait --wait-timeout 240 --no-deps homeassistant
+```
+
+The command completed successfully. No additional LIVE mutation was initiated by ChatGPT after that owner-executed command.
+
+Fresh read-only verification after reconciliation showed:
+
+- running Home Assistant image: `sha256:a1bc133af84ee6505fe2c266d9805b7c75b780dfdc188edfee3b11e8f3cd8efe`;
+- local `ghcr.io/home-assistant/home-assistant:stable`: same exact image ID;
+- Home Assistant version label: `2026.9.2`;
+- running Compose config hash: `997f6bd4a88112bb607ef18015c64c7c68b64cf862331ebf75e8039aa66e2b60`;
+- current desired `docker compose config --hash homeassistant`: same exact hash;
+- Home Assistant local endpoint: HTTP 200;
+- Home Assistant public endpoint: HTTP 302, matching the established redirect/auth expectation;
+- main Compose: all services running; healthcheck-equipped services healthy;
+- CV Compose: `cv` running, `cvbot` healthy;
+- `/run/reboot-required`: absent;
+- installed V28 Compose-selection policy: PASS; the Home Assistant `config-drift` blocker is gone.
+
+The policy currently sees newer pulled registry images pending for `autoheal`, `grafana`, `grafana-renderer`, and `uptime-kuma`. They were intentionally left untouched after the narrow Home Assistant reconciliation and remain for the normal scheduled maintenance path.
+
+Issue **#32** is closed as completed after the verified Home Assistant reconciliation.
+
+## 2026-09-20 stable-production proof
 
 The normal scheduled maintenance run `20260920_022000` completed successfully under the reviewed V28 policy and exercised the natural `if-needed` reboot path.
 
@@ -47,12 +129,12 @@ Fresh read-only evidence collected after the run and reboot showed:
 
 - `rpi5-update.service`: `Result=success`, `ExecMainStatus=0`;
 - evidence directory `/var/log/rpi5-maintenance/20260920_022000` present with V28 run-scoped Docker evidence;
-- main Docker `pull`, `target-selection`, `reconcile`: `outcome=succeeded`, `rc=0`, `mutation=changed`;
+- main Docker `pull`, `target-selection`, and `reconcile`: `outcome=succeeded`, `rc=0`, `mutation=changed`;
 - main Docker `final-health`: `outcome=healthy`, `rc=0`;
-- CV Docker `pull`, `target-selection`, `reconcile`: `outcome=succeeded`, `rc=0`, `mutation=none`;
+- CV Docker `pull`, `target-selection`, and `reconcile`: `outcome=succeeded`, `rc=0`, `mutation=none`;
 - CV Docker `final-health`: `outcome=healthy`, `rc=0`;
 - final main/CV evidence lists all expected containers running, with healthcheck-equipped containers healthy;
-- APT simulation reported `20` upgradable and `0` removable packages, followed by the reviewed `upgrade --with-new-pkgs --no-remove` path;
+- APT simulation reported `20` upgradable and `0` removable packages, followed by the reviewed safe `upgrade --with-new-pkgs --no-remove` path;
 - rclone remained APT/dpkg-managed;
 - cleanup remained under the reviewed 14-day policy; autoremove candidates were informational only and were not deleted automatically;
 - Hermes remained manual-only; the run reported `12137` commits behind `origin/main` and performed no Hermes update;
@@ -60,23 +142,23 @@ Fresh read-only evidence collected after the run and reboot showed:
 - after reboot `/run/reboot-required` is absent;
 - `rpi5-update.timer` is `enabled/active`, next scheduled elapse `2026-09-27 02:20 CEST`;
 - `rpi5-post-reboot.service`: `Result=success`, `ExecMainStatus=0`, readiness PASS on attempt `2/30`;
-- systemd triggered `OnSuccess=` and started `rpi5-maintenance-notify@success-rpi5-post-reboot.service`; the notifier instance completed successfully;
+- systemd triggered `OnSuccess=` and started `rpi5-maintenance-notify@success-rpi5-post-reboot.service`; the notifier completed successfully;
 - the prior `unknown`/trigger-source ambiguity did not recur;
-- the installed V28 updater/helper hashes and PR #7 notifier/service hashes exactly match the reviewed production baseline above.
+- installed production hashes still match the reviewed V28 updater/helper and PR #7 notifier/service identities recorded above.
 
-This closes the post-cutover stability gate for the installed `0.2.0` maintenance control-plane plus PR #7 notifier hotfix. No manual maintenance run or manufactured reboot was used to establish the proof.
+This establishes stable-production proof for the installed `0.2.0` maintenance control-plane plus the reviewed PR #7 notifier hotfix. No manual maintenance run or manufactured reboot was used to establish this proof.
 
 ## Current lane — Phase 9 duplicated maintenance-source cleanup
 
-Issue **#24** is the active continuation lane. The stable-production prerequisite is satisfied; #24 remains open for the actual cleanup work.
+Issue **#24** is now the active continuation lane. The stable-production prerequisite is satisfied; the issue remains open for the actual Phase 9 cleanup work.
 
-Proceed source-first and fail-closed:
+Current gate:
 
 1. Inventory only duplicated maintenance source/policy remaining in `RPi5_main` whose canonical ownership is now `RPi5-maintenance`.
 2. Identify systemd `Documentation=`/operator docs/provenance pointers that still reference predecessor ownership.
 3. Prove from source and minimum read-only runtime evidence that no active deployment/runtime path depends on files proposed for removal.
 4. Prepare the smallest coherent reviewed source PR(s), preserving rollback/recovery documentation.
-5. Do not merge without explicit MERGE authorization.
-6. Do not remove, deploy, rewrite, restart, reload, clean up or otherwise mutate the live RPi5 without separate explicit LIVE authorization.
+5. Merge remains separately owner-gated.
+6. Any live removal/deployment/systemd/filesystem mutation remains separately LIVE-gated.
 
 P2 transaction classification/continuation and P3 doctor/backoff remain separate later behavior milestones and require their own scoped work items.
