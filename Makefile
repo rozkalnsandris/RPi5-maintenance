@@ -37,6 +37,7 @@ test:
 	bash ./tests/test-maintenance-health.sh
 	python3 ./tests/test-service-health-policy.py
 	bash ./tests/test-service-health-classifier.sh
+	python3 ./tests/test-health-gates-activation.py
 	bash ./tests/test-maintenance-health-entrypoints.sh
 	python3 ./tests/test-maintenance-telegram-credentials.py
 	bash ./tests/test-maintenance-systemd-units.sh
