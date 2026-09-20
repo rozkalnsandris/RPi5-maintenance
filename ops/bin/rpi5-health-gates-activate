@@ -169,6 +169,34 @@ assert_service_inactive() {
     [[ "$state" != 'active' && "$state" != 'activating' && "$state" != 'deactivating' ]] || fail "$unit is not quiescent: $state"
 }
 
+validate_lock_path() {
+    local path="$1"
+    if [[ -e "$path" || -L "$path" ]]; then
+        require_root_file "$path" || fail "unsafe existing lock file: $path"
+    fi
+}
+
+probe_lock_available() {
+    local path="$1" fd rc=0
+    validate_lock_path "$path"
+    [[ -e "$path" ]] || return 0
+    exec {fd}<>"$path" || fail "cannot open lock file for preflight: $path"
+    flock --exclusive --nonblock --conflict-exit-code "$LOCK_CONFLICT_RC" "$fd" || rc=$?
+    if (( rc != 0 )); then
+        eval "exec ${fd}>&-"
+        [[ "$rc" -eq "$LOCK_CONFLICT_RC" ]] && fail "maintenance lock busy: $path"
+        fail "maintenance lock preflight error rc=$rc path=$path"
+    fi
+    flock --unlock "$fd" 2>/dev/null || true
+    eval "exec ${fd}>&-"
+}
+
+verify_lock_availability() {
+    probe_lock_available "$UPDATE_LOCK"
+    probe_lock_available "$BACKUP_LOCK"
+    probe_lock_available "$SHARED_LOCK"
+}
+
 verify_runtime_baseline() {
     [[ "$(hostname -s)" == "$EXPECTED_HOST" ]] || fail "unexpected host: $(hostname -s)"
     for command_name in awk bash cp curl date flock git grep hostname install mktemp mv python3 sha256sum stat systemctl; do
@@ -198,6 +226,10 @@ verify_runtime_baseline() {
         assert_target_prestate "$i"
     done
 
+    validate_lock_path "$UPDATE_LOCK"
+    validate_lock_path "$BACKUP_LOCK"
+    validate_lock_path "$SHARED_LOCK"
+
     assert_service_inactive rpi5-monitor.service
     assert_service_inactive rpi5-post-reboot.service
     assert_service_inactive rpi5-update.service
@@ -223,9 +255,42 @@ release_locks() {
     release_lock_var UPDATE_FD
 }
 
-acquire_existing_lock() {
+create_lock_file_if_missing() {
+    local path="$1" rc=0
+    validate_lock_path "$path"
+    [[ -e "$path" ]] && return 0
+
+    MUTATION_STARTED=true
+    python3 - "$path" <<'PY' || rc=$?
+import os
+import sys
+
+path = sys.argv[1]
+flags = os.O_RDWR | os.O_CREAT | os.O_EXCL
+if hasattr(os, 'O_NOFOLLOW'):
+    flags |= os.O_NOFOLLOW
+try:
+    fd = os.open(path, flags, 0o600)
+except FileExistsError:
+    raise SystemExit(17)
+else:
+    os.close(fd)
+PY
+    case "$rc" in
+        0)
+            ;;
+        17)
+            ;;
+        *)
+            fail "cannot safely create lock file rc=$rc path=$path"
+            ;;
+    esac
+    require_root_file "$path" || fail "unsafe lock file after create/race: $path"
+}
+
+acquire_lock() {
     local path="$1" result_var="$2" fd rc=0
-    require_root_file "$path" || fail "unsafe/missing lock file: $path"
+    create_lock_file_if_missing "$path"
     exec {fd}<>"$path" || fail "cannot open lock file: $path"
     flock --exclusive --nonblock --conflict-exit-code "$LOCK_CONFLICT_RC" "$fd" || rc=$?
     if (( rc != 0 )); then
@@ -237,9 +302,9 @@ acquire_existing_lock() {
 }
 
 acquire_locks() {
-    acquire_existing_lock "$UPDATE_LOCK" UPDATE_FD
-    acquire_existing_lock "$BACKUP_LOCK" BACKUP_FD
-    acquire_existing_lock "$SHARED_LOCK" SHARED_FD
+    acquire_lock "$UPDATE_LOCK" UPDATE_FD
+    acquire_lock "$BACKUP_LOCK" BACKUP_FD
+    acquire_lock "$SHARED_LOCK" SHARED_FD
 }
 
 on_exit() {
@@ -255,10 +320,11 @@ on_exit() {
 trap on_exit EXIT
 
 verify_runtime_baseline
+verify_lock_availability
 
 if [[ "$ACTION" == '--preflight' ]]; then
     printf 'HEALTH_GATES_PREFLIGHT=PASS source_sha=%s\n' "$SOURCE_SHA"
-    printf 'MUTATION_SCOPE=6-files daemon-reload-only no-service-restart no-reboot\n'
+    printf 'MUTATION_SCOPE=6-files plus-missing-lockfiles daemon-reload-only no-service-restart no-reboot\n'
     exit 0
 fi
 
