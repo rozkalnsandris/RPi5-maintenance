@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Shared service-health classification helpers for rpi5-monitor.
+# Shared service-health classification helpers for RPi5 maintenance health gates.
 
 RPI5_HEALTH_CLASS=""
 RPI5_HEALTH_REASON=""
@@ -36,8 +36,13 @@ rpi5_service_health_classify() {
     }
 
     if [[ "$state" != "$required_state" ]]; then
-        RPI5_HEALTH_CLASS="FAIL_PERSISTENT"
-        RPI5_HEALTH_REASON="state-${state:-missing}"
+        if [[ "$state" == "missing" ]] && (( age_seconds < grace_seconds )); then
+            RPI5_HEALTH_CLASS="TRANSIENT"
+            RPI5_HEALTH_REASON="state-missing-within-grace"
+        else
+            RPI5_HEALTH_CLASS="FAIL_PERSISTENT"
+            RPI5_HEALTH_REASON="state-${state:-missing}"
+        fi
         return 0
     fi
 
