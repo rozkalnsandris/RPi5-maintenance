@@ -16,6 +16,7 @@ INPUT_SCHEMA = "rpi5-docker-runtime-inventory.v1"
 OUTPUT_SCHEMA = "rpi5-docker-retention-plan.v1"
 IMAGE_ID_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 TOKEN_RE = re.compile(r"^[A-Za-z0-9._:-]+$")
+REFERENCE_RE = re.compile(r"^[A-Za-z0-9._:/@+-]+$")
 
 
 def _obj(value: Any, context: str) -> dict[str, Any]:
@@ -36,6 +37,12 @@ def _token(value: Any, context: str) -> str:
     return value
 
 
+def _reference(value: Any, context: str) -> str:
+    if not isinstance(value, str) or not value or not REFERENCE_RE.fullmatch(value):
+        raise ValueError(f"invalid Docker reference for {context}: {value!r}")
+    return value
+
+
 def _image_id(value: Any, context: str) -> str:
     if not isinstance(value, str) or not IMAGE_ID_RE.fullmatch(value):
         raise ValueError(f"invalid image id for {context}: {value!r}")
@@ -52,7 +59,7 @@ def _int(value: Any, context: str, *, minimum: int = 0, maximum: int | None = No
 
 def _repositories(value: Any, context: str) -> list[str]:
     values = _list(value, context)
-    repos = [_token(item, context) for item in values]
+    repos = [_reference(item, context) for item in values]
     return sorted(set(repos))
 
 
@@ -116,7 +123,7 @@ def build_inventory(payload: dict[str, Any]) -> dict[str, Any]:
         raw = _obj(item, f"managed_services[{index}]")
         project = _token(raw.get("project"), f"managed_services[{index}].project")
         service = _token(raw.get("service"), f"managed_services[{index}].service")
-        lineage = _token(raw.get("lineage"), f"managed_services[{index}].lineage")
+        lineage = _reference(raw.get("lineage"), f"managed_services[{index}].lineage")
         current_container = _token(raw.get("current_container"), f"managed_services[{index}].current_container")
         key = (project, service)
         if key in service_keys:
