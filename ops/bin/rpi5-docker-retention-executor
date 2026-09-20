@@ -1,0 +1,361 @@
+#!/usr/bin/env python3
+"""Fail-closed exact-image-ID executor for reviewed Docker retention plans.
+
+This source is not wired into scheduled maintenance. Dry-run is the default.
+`--apply` is a future LIVE mutation path and must only be used after separate
+owner authorization and deployment review.
+"""
+from __future__ import annotations
+
+import argparse
+import importlib.machinery
+import importlib.util
+import json
+import os
+import subprocess
+import sys
+import time
+from pathlib import Path
+from typing import Any
+
+
+def load_source_module(name: str, path: Path):
+    loader = importlib.machinery.SourceFileLoader(name, str(path))
+    spec = importlib.util.spec_from_loader(name, loader)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load module: {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def load_py_module(name: str, path: Path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load module: {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+_ROOT = Path(__file__).resolve().parents[1]
+_core = load_py_module("rpi5_retention_executor_core", _ROOT / "lib" / "rpi5-docker-retention-executor-core.py")
+ExecutorError = _core.ExecutorError
+DeleteError = _core.DeleteError
+RESULT_SCHEMA = _core.RESULT_SCHEMA
+read_reviewed_plan = _core.read_reviewed_plan
+validate_reviewed_plan = _core.validate_reviewed_plan
+safety_fingerprint = _core.safety_fingerprint
+assert_initial_freshness = _core.assert_initial_freshness
+assert_target_still_deletable = _core.assert_target_still_deletable
+inspect_exact_target = _core.inspect_exact_target
+delete_argv = _core.delete_argv
+EvidenceWriter = _core.EvidenceWriter
+
+
+def delete_exact_image(image_id: str, timeout_seconds: int) -> dict[str, Any]:
+    argv = delete_argv(image_id)
+    try:
+        cp = subprocess.run(
+            argv,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+            timeout=timeout_seconds,
+            env={**os.environ, "LC_ALL": "C", "LANG": "C"},
+        )
+    except subprocess.TimeoutExpired as exc:
+        stdout = exc.stdout.decode(errors="replace") if isinstance(exc.stdout, bytes) else (exc.stdout or "")
+        stderr = exc.stderr.decode(errors="replace") if isinstance(exc.stderr, bytes) else (exc.stderr or "")
+        raise DeleteError(image_id, 124, stdout, stderr) from exc
+    except OSError as exc:
+        raise DeleteError(image_id, 125, "", str(exc)) from exc
+    if cp.returncode != 0:
+        raise DeleteError(image_id, cp.returncode, cp.stdout, cp.stderr)
+    return {"argv": argv, "rc": 0, "stdout": cp.stdout.strip()[:1000]}
+
+
+def assert_image_absent(report_mod, runner, image_id: str) -> None:
+    ids = {
+        token
+        for token in runner.run(["docker", "image", "ls", "-a", "--no-trunc", "--quiet"]).split()
+        if token
+    }
+    if image_id in ids:
+        raise ExecutorError(f"image still present after delete command: {image_id}")
+
+
+def fresh_plan(
+    report_mod,
+    inventory_mod,
+    planner_mod,
+    *,
+    projects,
+    evidence_root: Path,
+    trusted_runs: list[str],
+    retention_seconds: int,
+    reserve: int,
+    high_percent: int,
+    cache_max_bytes: int,
+    timeout_seconds: int,
+) -> dict[str, Any]:
+    try:
+        raw = report_mod.collect_raw(
+            report_mod.Runner(timeout_seconds),
+            projects,
+            evidence_root,
+            trusted_runs,
+            int(time.time()),
+            retention_seconds,
+            reserve,
+            high_percent,
+            cache_max_bytes,
+        )
+        return planner_mod.build_plan(inventory_mod.build_inventory(raw))
+    except (OSError, ValueError, report_mod.ReportError) as exc:
+        raise ExecutorError(f"fresh runtime replan failed: {exc}") from exc
+
+
+def run_executor(
+    reviewed: dict[str, Any],
+    requested_ids: list[str],
+    *,
+    plan_sha256: str,
+    report_mod,
+    inventory_mod,
+    planner_mod,
+    projects,
+    evidence_root: Path,
+    trusted_runs: list[str],
+    retention_seconds: int,
+    reserve: int,
+    timeout_seconds: int,
+    apply: bool,
+    evidence_output: Path | None,
+    delete_func=delete_exact_image,
+) -> dict[str, Any]:
+    validate_reviewed_plan(reviewed, requested_ids)
+    high = reviewed["watermark"]["high_percent"]
+    cache_max = reviewed["build_cache"]["max_bytes"]
+
+    initial = fresh_plan(
+        report_mod,
+        inventory_mod,
+        planner_mod,
+        projects=projects,
+        evidence_root=evidence_root,
+        trusted_runs=trusted_runs,
+        retention_seconds=retention_seconds,
+        reserve=reserve,
+        high_percent=high,
+        cache_max_bytes=cache_max,
+        timeout_seconds=timeout_seconds,
+    )
+    assert_initial_freshness(reviewed, initial)
+    initial_fp = safety_fingerprint(initial)
+
+    result: dict[str, Any] = {
+        "schema": RESULT_SCHEMA,
+        "mode": "apply" if apply else "dry-run",
+        "reviewed_plan_sha256": plan_sha256,
+        "fresh_safety_fingerprint_sha256": initial_fp,
+        "requested_delete_ids": requested_ids,
+        "results": [],
+    }
+
+    if not apply:
+        runner = report_mod.Runner(timeout_seconds)
+        for image_id in requested_ids:
+            decision = assert_target_still_deletable(reviewed, initial, image_id)
+            inspect = inspect_exact_target(report_mod, runner, image_id, decision["lineages"][0])
+            result["results"].append(
+                {
+                    **inspect,
+                    "status": "would-delete",
+                    "delete_argv": delete_argv(image_id),
+                }
+            )
+        return result
+
+    if evidence_output is None:
+        raise ExecutorError("--evidence-output is required with --apply")
+
+    writer = EvidenceWriter(evidence_output)
+    # Creating the durable apply evidence file is itself the first apply-side
+    # filesystem mutation. From this point onward any uncertainty is fail-closed.
+    mutation_started = True
+    try:
+        writer.write(
+            {
+                "schema": RESULT_SCHEMA,
+                "event": "executor-start",
+                "reviewed_plan_sha256": plan_sha256,
+                "fresh_safety_fingerprint_sha256": initial_fp,
+                "requested_delete_ids": requested_ids,
+                "mutation_started": True,
+                "retry_attempted": False,
+                "rollback_attempted": False,
+            }
+        )
+        for image_id in requested_ids:
+            current = fresh_plan(
+                report_mod,
+                inventory_mod,
+                planner_mod,
+                projects=projects,
+                evidence_root=evidence_root,
+                trusted_runs=trusted_runs,
+                retention_seconds=retention_seconds,
+                reserve=reserve,
+                high_percent=high,
+                cache_max_bytes=cache_max,
+                timeout_seconds=timeout_seconds,
+            )
+            decision = assert_target_still_deletable(reviewed, current, image_id)
+            runner = report_mod.Runner(timeout_seconds)
+            inspect = inspect_exact_target(report_mod, runner, image_id, decision["lineages"][0])
+            predelete = {
+                "schema": RESULT_SCHEMA,
+                "event": "pre-delete-approved",
+                **inspect,
+                "fresh_safety_fingerprint_sha256": safety_fingerprint(current),
+                "delete_argv": delete_argv(image_id),
+            }
+            writer.write(predelete)
+            try:
+                command = delete_func(image_id, timeout_seconds)
+            except DeleteError as exc:
+                failure = {
+                    "schema": RESULT_SCHEMA,
+                    "event": "delete-failed",
+                    "id": image_id,
+                    "rc": exc.rc,
+                    "stdout": exc.stdout.strip()[:1000],
+                    "stderr": exc.stderr.strip()[:1000],
+                    "mutation_started": True,
+                    "retry_attempted": False,
+                    "rollback_attempted": False,
+                }
+                writer.write(failure)
+                result["results"].append({**inspect, "status": "failed", "rc": exc.rc})
+                result["stopped_fail_closed"] = True
+                raise ExecutorError(str(exc)) from exc
+
+            try:
+                assert_image_absent(report_mod, runner, image_id)
+            except ExecutorError as exc:
+                writer.write(
+                    {
+                        "schema": RESULT_SCHEMA,
+                        "event": "post-delete-verify-failed",
+                        "id": image_id,
+                        "mutation_started": True,
+                        "retry_attempted": False,
+                        "rollback_attempted": False,
+                        "error": str(exc)[:1000],
+                    }
+                )
+                result["results"].append({**inspect, "status": "verify-failed", "rc": 1})
+                result["stopped_fail_closed"] = True
+                raise
+
+            success = {
+                "schema": RESULT_SCHEMA,
+                "event": "delete-succeeded",
+                "id": image_id,
+                "rc": 0,
+                "command": command["argv"],
+                "stdout": command.get("stdout", ""),
+            }
+            writer.write(success)
+            result["results"].append({**inspect, "status": "deleted", "rc": 0})
+
+        result["stopped_fail_closed"] = False
+        result["mutation_started"] = True
+        return result
+    except ExecutorError as exc:
+        if mutation_started:
+            result["mutation_started"] = True
+            # One best-effort stop marker only; no retry, rollback, cleanup, or
+            # alternate delete path is attempted.
+            try:
+                writer.write(
+                    {
+                        "schema": RESULT_SCHEMA,
+                        "event": "executor-stopped-fail-closed",
+                        "mutation_started": True,
+                        "retry_attempted": False,
+                        "rollback_attempted": False,
+                        "error": str(exc)[:1000],
+                    }
+                )
+            except ExecutorError:
+                pass
+        raise
+    finally:
+        writer.close()
+
+
+def main() -> int:
+    root = Path(__file__).resolve().parents[1]
+    report_mod = load_source_module("rpi5_retention_report", root / "bin" / "rpi5-docker-retention-report")
+    inventory_mod = load_py_module("rpi5_retention_inventory", root / "lib" / "rpi5-docker-retention-inventory.py")
+    planner_mod = load_py_module("rpi5_retention_plan", root / "lib" / "rpi5-docker-retention-plan.py")
+
+    ap = argparse.ArgumentParser(
+        description="Fail-closed exact-image-ID executor. Dry-run by default; --apply is a LIVE mutation."
+    )
+    ap.add_argument("plan", type=Path, help="reviewed planner-result JSON file")
+    ap.add_argument("--expected-plan-sha256", required=True)
+    ap.add_argument("--delete-id", action="append", default=[], dest="delete_ids")
+    ap.add_argument("--project", action="append", type=report_mod.parse_project, required=True, metavar="NAME=/PATH")
+    ap.add_argument("--evidence-root", type=Path, default=Path("/var/log/rpi5-maintenance"))
+    ap.add_argument("--trusted-evidence-run", action="append", default=[])
+    ap.add_argument("--retention-seconds", type=report_mod.nonneg, required=True)
+    ap.add_argument("--superseded-keep-per-lineage", type=report_mod.nonneg, required=True)
+    ap.add_argument("--command-timeout-seconds", type=report_mod.pos, default=15)
+    ap.add_argument("--apply", action="store_true")
+    ap.add_argument("--evidence-output", type=Path)
+    ap.add_argument("--pretty", action="store_true")
+    args = ap.parse_args()
+
+    names = [item[0] for item in args.project]
+    if len(names) != len(set(names)) or set(names) != {"main", "cv"} or len(names) != 2:
+        ap.error("exactly --project main=/... and --project cv=/... are required")
+    if not args.trusted_evidence_run:
+        ap.error("at least one --trusted-evidence-run is required")
+    if args.apply and args.evidence_output is None:
+        ap.error("--evidence-output is required with --apply")
+    if not args.apply and args.evidence_output is not None:
+        ap.error("--evidence-output is only valid with --apply")
+
+    try:
+        reviewed, actual_sha = read_reviewed_plan(args.plan, args.expected_plan_sha256)
+        result = run_executor(
+            reviewed,
+            args.delete_ids,
+            plan_sha256=actual_sha,
+            report_mod=report_mod,
+            inventory_mod=inventory_mod,
+            planner_mod=planner_mod,
+            projects=args.project,
+            evidence_root=args.evidence_root,
+            trusted_runs=args.trusted_evidence_run,
+            retention_seconds=args.retention_seconds,
+            reserve=args.superseded_keep_per_lineage,
+            timeout_seconds=args.command_timeout_seconds,
+            apply=args.apply,
+            evidence_output=args.evidence_output,
+        )
+    except ExecutorError as exc:
+        print(f"retention-executor error: {exc}", file=sys.stderr)
+        return 2
+
+    json.dump(result, sys.stdout, sort_keys=True, indent=2 if args.pretty else None)
+    sys.stdout.write("\n")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
