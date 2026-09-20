@@ -1,0 +1,158 @@
+#!/usr/bin/env python3
+"""Read-only capability check + deterministic BuildKit cache prune planner.
+
+This executable never runs a prune command. When a future prune is required it
+prints the exact argv that a separately reviewed/LIVE-authorized executor could
+use after capability and builder checks pass.
+"""
+from __future__ import annotations
+
+import argparse
+import importlib.util
+import json
+import os
+import re
+from pathlib import Path
+import subprocess
+import sys
+from typing import Any
+
+
+class PlanError(RuntimeError):
+    pass
+
+
+class ReadOnlyRunner:
+    def __init__(self, timeout_seconds: int):
+        self.timeout_seconds = timeout_seconds
+
+    def run(self, argv: list[str]) -> str:
+        allowed = (
+            argv == ["docker", "buildx", "--help"]
+            or argv == ["docker", "buildx", "prune", "--help"]
+            or (
+                len(argv) == 4
+                and argv[:3] == ["docker", "buildx", "inspect"]
+                and bool(argv[3])
+            )
+        )
+        if not allowed:
+            raise PlanError(f"refusing non-read-only command: {argv!r}")
+        try:
+            cp = subprocess.run(
+                argv,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+                timeout=self.timeout_seconds,
+                env={**os.environ, "LC_ALL": "C", "LANG": "C"},
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise PlanError(f"read-only capability command timed out: {argv!r}") from exc
+        except OSError as exc:
+            raise PlanError(f"cannot execute read-only capability command {argv!r}: {exc}") from exc
+        if cp.returncode != 0:
+            raise PlanError(
+                f"read-only capability command failed rc={cp.returncode}: {argv!r}: {cp.stderr.strip()[:500]}"
+            )
+        return cp.stdout
+
+
+def load_policy(root: Path):
+    path = root / "lib" / "rpi5-docker-build-cache-policy.py"
+    spec = importlib.util.spec_from_file_location("rpi5_build_cache_policy", path)
+    if spec is None or spec.loader is None:
+        raise PlanError(f"cannot load policy module: {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+BUILDER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
+
+
+def require_capabilities(runner: ReadOnlyRunner, builder: str) -> dict[str, Any]:
+    if not BUILDER_RE.fullmatch(builder):
+        raise PlanError(f"invalid builder identity: {builder!r}")
+    top = runner.run(["docker", "buildx", "--help"])
+    prune = runner.run(["docker", "buildx", "prune", "--help"])
+    required_top = ("--builder",)
+    required_prune = ("--filter", "--force", "--max-used-space")
+    missing = [token for token in required_top if token not in top]
+    missing += [token for token in required_prune if token not in prune]
+    if missing:
+        raise PlanError("required buildx prune capabilities missing: " + ", ".join(sorted(set(missing))))
+    inspect = runner.run(["docker", "buildx", "inspect", builder])
+    if not inspect.strip():
+        raise PlanError(f"builder inspect returned empty output: {builder}")
+    names = [line.split(":", 1)[1].strip() for line in inspect.splitlines() if line.startswith("Name:")]
+    if names != [builder]:
+        raise PlanError(f"builder inspect identity mismatch: expected {builder!r}, got {names!r}")
+    return {
+        "docker_buildx": True,
+        "explicit_builder": True,
+        "prune_filter": True,
+        "max_used_space": True,
+        "builder_inspect": "present",
+    }
+
+
+def positive(value: str) -> int:
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("must be an integer") from exc
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("must be positive")
+    return parsed
+
+
+def nonnegative(value: str) -> int:
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("must be an integer") from exc
+    if parsed < 0:
+        raise argparse.ArgumentTypeError("must be non-negative")
+    return parsed
+
+
+def main() -> int:
+    root = Path(__file__).resolve().parents[1]
+    policy = load_policy(root)
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("plan", type=Path, help="retention planner result JSON")
+    ap.add_argument("--builder", required=True, help="exact Buildx builder identity")
+    ap.add_argument("--min-age-seconds", type=positive, default=14 * 86400)
+    ap.add_argument("--command-timeout-seconds", type=positive, default=15)
+    ap.add_argument("--pretty", action="store_true")
+    args = ap.parse_args()
+
+    try:
+        if not args.plan.is_file() or args.plan.is_symlink():
+            raise PlanError(f"planner result missing/unsafe: {args.plan}")
+        with args.plan.open("r", encoding="utf-8") as handle:
+            retention = json.load(handle)
+        result = policy.build_cache_plan(
+            retention,
+            builder=args.builder,
+            min_age_seconds=args.min_age_seconds,
+        )
+        if result["action"] == "prune-required":
+            result["capability_evidence"] = require_capabilities(
+                ReadOnlyRunner(args.command_timeout_seconds), args.builder
+            )
+        else:
+            result["capability_evidence"] = {"required_for_action": False}
+    except (OSError, json.JSONDecodeError, policy.CachePolicyError, PlanError) as exc:
+        print(f"build-cache-plan error: {exc}", file=sys.stderr)
+        return 2
+
+    json.dump(result, sys.stdout, sort_keys=True, indent=2 if args.pretty else None)
+    sys.stdout.write("\n")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
