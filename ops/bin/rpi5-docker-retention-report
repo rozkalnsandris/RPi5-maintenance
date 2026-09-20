@@ -103,7 +103,8 @@ def collect_containers(r:Runner):
     return sorted(out,key=lambda x:x['name']),by_id
 
 def collect_images(r:Runner):
-    ids=sorted(set(x for x in r.run(['docker','image','ls','--no-trunc','--quiet']).split() if x))
+    # Docker hides dangling/intermediate images by default; --all is required for a complete local inventory.
+    ids=sorted(set(x for x in r.run(['docker','image','ls','--all','--no-trunc','--quiet']).split() if x))
     if not ids: return {}
     rows=parse_array(r.run(['docker','image','inspect',*ids]),'docker image inspect')
     out={}

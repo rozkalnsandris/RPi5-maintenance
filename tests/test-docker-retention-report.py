@@ -31,13 +31,15 @@ class FakeRunner:
               {'Id':CID_CV,'Name':'/cv-web-1','Image':CV},
               {'Id':CID_OTHER,'Name':'/other-1','Image':OTHER},
             ])
-        if t==('docker','image','ls','--no-trunc','--quiet'): return '\n'.join([CURRENT,PREV,CAND,CV,OLD,CVOLD,OTHER])+'\n'
+        if t==('docker','image','ls','--all','--no-trunc','--quiet'): return '\n'.join([CURRENT,PREV,CAND,CV,OLD,CVOLD,OTHER])+'\n'
         if t[:3]==('docker','image','inspect') and len(t)>4:
             refs={
               CURRENT:['ghcr.io/example/app@sha256:'+'a'*64], PREV:['ghcr.io/example/app@sha256:'+'b'*64], CAND:['ghcr.io/example/app:latest'],
-              CV:['ghcr.io/example/cv:latest'], OLD:['ghcr.io/example/app@sha256:'+'c'*64], CVOLD:['ghcr.io/example/cv@sha256:'+'d'*64], OTHER:['ghcr.io/other/app:latest']}
+              CV:['ghcr.io/example/cv:latest'], OLD:['ghcr.io/example/app@sha256:'+'c'*64], CVOLD:['ghcr.io/example/cv@sha256:'+'d'*64]}
             rows=[]
-            for i,iid in enumerate(t[3:]): rows.append({'Id':iid,'Created':'2026-08-%02dT00:00:00Z'%(1+i),'Size':1000+i,'RepoTags':refs[iid] if ':' in refs[iid][0] and '@' not in refs[iid][0] else [],'RepoDigests':refs[iid] if '@' in refs[iid][0] else []})
+            for i,iid in enumerate(t[3:]):
+                values=refs.get(iid,[])
+                rows.append({'Id':iid,'Created':'2026-08-%02dT00:00:00Z'%(1+i),'Size':1000+i,'RepoTags':values if values and ':' in values[0] and '@' not in values[0] else [],'RepoDigests':values if values and '@' in values[0] else []})
             return json.dumps(rows)
         if t==('docker','image','inspect','ghcr.io/example/app:latest'): return json.dumps([{'Id':CAND}])
         if t==('docker','image','inspect','ghcr.io/example/cv:latest'): return json.dumps([{'Id':CV}])
@@ -79,12 +81,16 @@ with tempfile.TemporaryDirectory() as td:
     images={x['id']:x for x in raw['images']}
     assert 'ghcr.io/example/app' in images[PREV]['repositories']
     assert 'ghcr.io/example/app' in images[CURRENT]['repositories']
+    assert images[OTHER]['repositories']==[]
     inv=load_py('retention_inventory',ROOT/'ops/lib/rpi5-docker-retention-inventory.py')
     planner=load_py('retention_plan',ROOT/'ops/lib/rpi5-docker-retention-plan.py')
     plan=planner.build_plan(inv.build_inventory(raw))
     assert OLD in plan['delete_ids']
     assert CVOLD not in plan['delete_ids']
     assert plan['blocked_lineages']['ghcr.io/example/cv']==['missing-previous-known-good']
+    decisions={x['id']:x for x in plan['images']}
+    assert decisions[OTHER]['action']=='protect'
+    assert decisions[OTHER]['role']=='container-referenced'
 
 try:
     mod.Runner(1).run(['docker','image','prune','-a'])
