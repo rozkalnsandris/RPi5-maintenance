@@ -1,6 +1,6 @@
 [Unit]
 Description=RPi5 weekly maintenance update
-Documentation=https://github.com/rozkalnsandris/RPi5_main
+Documentation=https://github.com/rozkalnsandris/RPi5-maintenance
 Wants=network-online.target
 After=network-online.target docker.service
 OnFailure=rpi5-maintenance-notify@%N.service
