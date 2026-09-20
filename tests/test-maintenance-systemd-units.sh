@@ -20,6 +20,14 @@ for unit in "${units[@]}"; do
     [[ -f "$unit_dir/$unit" && ! -L "$unit_dir/$unit" ]]
 done
 
+for service in \
+    rpi5-update.service \
+    rpi5-monitor.service \
+    rpi5-post-reboot.service \
+    rpi5-maintenance-notify@.service; do
+    grep -Fxq 'Documentation=https://github.com/rozkalnsandris/RPi5-maintenance' "$unit_dir/$service"
+done
+
 # Schedule semantics are checked by systemd itself.
 systemd-analyze calendar 'Sun *-*-* 02:20:00' >/dev/null
 systemd-analyze calendar '*-*-* 09:00:00' >/dev/null

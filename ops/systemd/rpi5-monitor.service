@@ -1,6 +1,6 @@
 [Unit]
 Description=RPi5 daily maintenance health monitor
-Documentation=https://github.com/rozkalnsandris/RPi5_main
+Documentation=https://github.com/rozkalnsandris/RPi5-maintenance
 Wants=network-online.target
 After=network-online.target docker.service cloudflared.service ssh.service
 OnFailure=rpi5-maintenance-notify@%N.service
