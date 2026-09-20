@@ -242,7 +242,8 @@ verify_runtime_baseline() {
 }
 
 release_lock_var() {
-    local var="$1" fd="${!var:-}"
+    local var="$1" fd
+    fd="${!var}"
     [[ -n "$fd" ]] || return 0
     flock --unlock "$fd" 2>/dev/null || true
     eval "exec ${fd}>&-"
