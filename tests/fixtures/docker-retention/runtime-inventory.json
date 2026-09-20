@@ -1,0 +1,32 @@
+{
+  "schema": "rpi5-docker-runtime-inventory.v1",
+  "policy": {
+    "now_epoch": 2000000,
+    "retention_seconds": 1000,
+    "superseded_keep_per_lineage": 0,
+    "root_used_percent": 46,
+    "disk_high_watermark_percent": 80
+  },
+  "images": [
+    {"id":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","created_epoch":1999900,"size_bytes":100,"repositories":["repo/app"]},
+    {"id":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","created_epoch":1999950,"size_bytes":100,"repositories":["repo/app"]},
+    {"id":"sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","created_epoch":1997000,"size_bytes":100,"repositories":["repo/app"]},
+    {"id":"sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","created_epoch":1996000,"size_bytes":500,"repositories":["repo/app"]},
+    {"id":"sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee","created_epoch":1996000,"size_bytes":100,"repositories":["repo/other"]}
+  ],
+  "containers": [
+    {"name":"project_app_1","image_id":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+    {"name":"other_app_1","image_id":"sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"}
+  ],
+  "managed_services": [
+    {"project":"project","service":"app","lineage":"repo/app","current_container":"project_app_1","candidate_ids":["sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"]}
+  ],
+  "rollback_evidence": [
+    {"source":"v28-compose-evidence","project":"project","service":"app","phase":"pre-mutation","outcome":"success","image_id":"sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}
+  ],
+  "volumes": [
+    {"name":"project_data","project":"project","kind":"named"},
+    {"name":"anon-1","project":null,"kind":"anonymous"}
+  ],
+  "build_cache": {"bytes":5000,"reclaimable_bytes":4000,"max_bytes":2000}
+}

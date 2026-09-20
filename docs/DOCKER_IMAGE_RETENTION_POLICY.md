@@ -8,6 +8,8 @@ This policy extends the existing V24 cleanup contract without weakening it. The 
 
 The first implementation step is a pure planner at `ops/lib/rpi5-docker-retention-plan.py`. It accepts sanitized runtime inventory and emits deterministic dry-run decisions. It does not invoke Docker and has no deletion path.
 
+Phase 2 adds a pure sanitized runtime-inventory adapter at `ops/lib/rpi5-docker-retention-inventory.py`. It transforms reviewed sanitized evidence into the planner input schema and likewise has no Docker/subprocess execution or deletion path.
+
 ## Why a separate planner is required
 
 Docker's `docker image prune -a` removes every image that is not referenced by a container. That is too broad for this host because an unused image can still be a candidate release, previous-known-good rollback identity, or an image owned by another Compose project/repository.
@@ -111,6 +113,25 @@ The result contains:
 - report-only volume classification.
 
 The planner exits nonzero on malformed or contradictory inventory rather than guessing.
+
+## Phase 2 sanitized runtime-inventory adapter
+
+The adapter input schema is `rpi5-docker-runtime-inventory.v1`. It consumes an already-sanitized, read-only snapshot and emits the planner's existing input schema.
+
+It derives planner state from:
+
+- global container references mapped to exact immutable image IDs, so every referenced image remains protected regardless of ownership;
+- exact maintenance-managed `project` / `service` / `lineage` / `current_container` identities;
+- candidate images that are already locally resolved to exact `sha256:` IDs and proven to belong to the declared lineage;
+- previous-known-good rollback identities accepted only from `source=v28-compose-evidence`, `phase=pre-mutation`, `outcome=success`, with exact project/service/image identity;
+- exact image creation/size/repository metadata;
+- root/build-cache watermark evidence and report-only volume inventory.
+
+Evidence from another source, phase or outcome is not promoted to rollback proof. If no accepted previous-known-good identity exists, the adapter emits an empty rollback set and the planner blocks that lineage with `missing-previous-known-good`.
+
+The adapter rejects unknown image IDs, duplicate managed-service identities, missing current containers, current/candidate images outside the declared lineage, invalid percentages, invalid volume kinds and contradictory cache totals rather than guessing.
+
+Phase 2 deliberately stops at **sanitized snapshot -> planner input**. It does not collect host state, invoke Docker, add an image/cache deletion executor, alter the weekly updater cleanup path, or deploy anything to production. A later reviewed step must define the timeout-bounded read-only collector that creates this sanitized snapshot from runtime commands and V28 evidence.
 
 ## Integration boundary
 
