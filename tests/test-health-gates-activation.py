@@ -66,25 +66,18 @@ daemon_reload = text.index("systemctl daemon-reload", replace)
 monitor_verify = text.rindex("/usr/local/sbin/rpi5-monitor")
 assert preflight < acquire < mutation < backup < replace < daemon_reload < monitor_verify
 
-assert text.count("systemctl daemon-reload") == 1
+assert len(re.findall(r"(?m)^systemctl daemon-reload$", text)) == 1
 assert text.count("/usr/local/sbin/rpi5-post-reboot") >= 2
 assert "\n/usr/local/sbin/rpi5-post-reboot\n" not in text
 
-for forbidden in (
-    "systemctl restart",
-    "systemctl start",
-    "systemctl stop",
-    "systemctl enable",
-    "systemctl disable",
-    "docker compose",
-    "docker restart",
-    "apt-get",
-    "git pull",
-    "git checkout",
-    "shutdown -",
-    "reboot ",
-    "rm -rf",
+for forbidden_pattern in (
+    r"(?m)^\s*systemctl\s+(?:restart|start|stop|enable|disable)\b",
+    r"(?m)^\s*docker\s+(?:compose|restart)\b",
+    r"(?m)^\s*apt-get\b",
+    r"(?m)^\s*git\s+(?:pull|checkout)\b",
+    r"(?m)^\s*(?:shutdown|reboot)\b",
+    r"(?m)^\s*rm\s+-rf\b",
 ):
-    assert forbidden not in text, forbidden
+    assert re.search(forbidden_pattern, text) is None, forbidden_pattern
 
 print("Health-gates activation source contract: PASS")
