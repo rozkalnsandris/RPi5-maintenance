@@ -8,7 +8,7 @@ Phase 4 source/design for issue #11. Production is unchanged.
 
 ## Inputs and review binding
 
-The executor accepts only a planner result with schema `rpi5-docker-retention-plan-result.v1` plus one or more explicit full `sha256:` IDs supplied with `--delete-id`.
+The executor accepts a planner result with schema `rpi5-docker-retention-plan-result.v1` plus zero or more explicit full `sha256:` IDs supplied with `--delete-id` in dry-run mode. A dry-run with zero requested IDs is a valid no-op, but it still performs the fresh collector/planner revalidation and emits the fresh safety fingerprint. `--apply` continues to require at least one explicit full image ID and refuses before any apply-side evidence mutation when the requested ID list is empty.
 
 The reviewed planner-result bytes are bound with mandatory `--expected-plan-sha256`. A hash mismatch is a hard refusal.
 
@@ -49,7 +49,7 @@ The executor does not contain `docker system prune`, broad image prune, volume p
 
 ## Apply evidence and fail-closed semantics
 
-`--apply` additionally requires an absolute `--evidence-output` path in an existing non-symlink directory. The evidence file is created exclusively with mode `0600` and persisted with `fsync`.
+`--apply` requires at least one explicit `--delete-id` and additionally requires an absolute `--evidence-output` path in an existing non-symlink directory. An empty apply target set is rejected before the evidence file is created. The evidence file is created exclusively with mode `0600` and persisted with `fsync`.
 
 Creating that apply evidence file is the first apply-side filesystem mutation. From that point onward any timeout, Docker error, runtime/protection drift, evidence failure, ambiguous ownership or post-delete verification failure stops execution.
 
@@ -80,7 +80,7 @@ A future production step must separately review and authorize:
 1. exact source/release identity to install;
 2. exact installed path and permissions;
 3. reviewed planner-result artifact and SHA256;
-4. exact explicit image IDs;
+4. exact explicit image IDs for any apply operation;
 5. exact Compose/evidence inputs used for revalidation;
 6. exact apply evidence path;
 7. rollback semantics, which are deliberately **no automatic rollback** after a delete;
