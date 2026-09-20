@@ -1,0 +1,251 @@
+#!/usr/bin/env bash
+# Phase 6 scheduled entrypoint for #11.
+# Source path: ops/bin/rpi5-update-scheduled; installed as /usr/local/sbin/rpi5-update.
+#
+# Keeps the reviewed V28 updater core byte-identical, disables its legacy Docker
+# cleanup path, preserves bounded dangling-image cleanup here, and optionally
+# emits provenance-aware retention/cache dry-run evidence. No tagged-image or
+# BuildKit cache apply exists in this wrapper.
+set -Eeuo pipefail
+umask 077
+
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+export LC_ALL=C
+export LANG=C
+export COMPOSE_ANSI=never
+
+readonly MAIN_CONFIG="/etc/rpi-update.conf"
+readonly RETENTION_CONFIG="/etc/rpi5-maintenance/docker-retention.conf"
+readonly RUNTIME_ROOT="/usr/local/lib/rpi5-maintenance"
+readonly CORE="${RUNTIME_ROOT}/rpi5-update-v28-core"
+readonly CORE_SHA256="3a7898c1f06f7bd5b4136dd6875edf5c7178dad9c8ea4099ef065ce9b1c20882"
+readonly RETENTION_ROOT="${RUNTIME_ROOT}/docker-retention"
+readonly RETENTION_REPORT="${RETENTION_ROOT}/bin/rpi5-docker-retention-report"
+readonly RETENTION_EXECUTOR="${RETENTION_ROOT}/bin/rpi5-docker-retention-executor"
+readonly BUILD_CACHE_PLAN="${RETENTION_ROOT}/bin/rpi5-docker-build-cache-plan"
+readonly RETENTION_EVIDENCE_ROOT="/var/log/rpi5-maintenance/retention"
+
+log() {
+    printf '[phase6-retention] %s\n' "$*" >&2
+}
+
+fail() {
+    log "REFUSED: $*"
+    exit 2
+}
+
+require_root_file() {
+    local path="$1" uid mode
+    [[ -f "$path" && ! -L "$path" ]] || fail "missing/unsafe runtime file: $path"
+    uid="$(stat -c '%u' "$path")"
+    mode="$(stat -c '%a' "$path")"
+    [[ "$uid" -eq 0 ]] || fail "runtime file is not root-owned: $path"
+    (( (8#$mode & 022) == 0 )) || fail "runtime file is group/world writable: $path mode=$mode"
+}
+
+positive_integer() {
+    [[ "${1:-}" =~ ^[1-9][0-9]*$ ]]
+}
+
+nonnegative_integer() {
+    [[ "${1:-}" =~ ^[0-9]+$ ]]
+}
+
+[[ ${EUID:-$(id -u)} -eq 0 ]] || fail "must run as root"
+
+wrapper_mode="run"
+for arg in "$@"; do
+    case "$arg" in
+        --check) wrapper_mode="check" ;;
+        --cleanup-only) wrapper_mode="cleanup" ;;
+        --no-reboot) ;;
+        -h|--help)
+            require_root_file "$CORE"
+            exec "$CORE" "$@"
+            ;;
+        *) fail "unknown updater argument before core execution: $arg" ;;
+    esac
+done
+
+require_root_file "$MAIN_CONFIG"
+require_root_file "$RETENTION_CONFIG"
+require_root_file "$CORE"
+[[ "$(sha256sum "$CORE" | awk '{print $1}')" == "$CORE_SHA256" ]] ||
+    fail "installed V28 core identity mismatch"
+
+for path in "$RETENTION_REPORT" "$RETENTION_EXECUTOR" "$BUILD_CACHE_PLAN"; do
+    require_root_file "$path"
+done
+
+# The legacy core must never regain its docker builder prune path. If the
+# private config explicitly sets DOCKER_CLEANUP, it must already be "no".
+# If absent, the exported value below becomes the core's default.
+explicit_docker_cleanup="$(
+    awk -F= '
+        /^[[:space:]]*DOCKER_CLEANUP[[:space:]]*=/ {
+            value=$2
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
+            gsub(/^["\047]|["\047]$/, "", value)
+            print value
+            exit
+        }
+    ' "$MAIN_CONFIG"
+)"
+if [[ -n "$explicit_docker_cleanup" && "$explicit_docker_cleanup" != "no" ]]; then
+    fail "$MAIN_CONFIG explicitly sets DOCKER_CLEANUP=$explicit_docker_cleanup; reviewed Phase 6 requires no"
+fi
+export DOCKER_CLEANUP=no
+
+cleanup_days="$(
+    bash -c '
+        set -Eeuo pipefail
+        source "$1"
+        value="${CLEANUP_RETENTION_DAYS:-14}"
+        [[ "$value" =~ ^[1-9][0-9]*$ ]] || exit 2
+        printf "%s" "$value"
+    ' _ "$MAIN_CONFIG"
+)" || fail "cannot derive CLEANUP_RETENTION_DAYS"
+(( cleanup_days >= 1 && cleanup_days <= 3650 )) || fail "CLEANUP_RETENTION_DAYS outside 1..3650"
+
+# shellcheck source=/dev/null
+source "$RETENTION_CONFIG"
+
+RETENTION_MODE="${RETENTION_MODE:-off}"
+RETENTION_DANGLING_IMAGE_CLEANUP="${RETENTION_DANGLING_IMAGE_CLEANUP:-yes}"
+RETENTION_SUPERSEDED_KEEP_PER_LINEAGE="${RETENTION_SUPERSEDED_KEEP_PER_LINEAGE:-1}"
+RETENTION_DISK_HIGH_WATERMARK_PERCENT="${RETENTION_DISK_HIGH_WATERMARK_PERCENT:-80}"
+RETENTION_BUILD_CACHE_MAX_BYTES="${RETENTION_BUILD_CACHE_MAX_BYTES:-8589934592}"
+RETENTION_BUILDX_BUILDER="${RETENTION_BUILDX_BUILDER:-default}"
+RETENTION_COMMAND_TIMEOUT_SECONDS="${RETENTION_COMMAND_TIMEOUT_SECONDS:-15}"
+RETENTION_MAIN_PROJECT_DIR="${RETENTION_MAIN_PROJECT_DIR:-}"
+RETENTION_CV_PROJECT_DIR="${RETENTION_CV_PROJECT_DIR:-}"
+RETENTION_TRUSTED_EVIDENCE_RUNS="${RETENTION_TRUSTED_EVIDENCE_RUNS:-}"
+
+case "$RETENTION_MODE" in
+    off|report) ;;
+    *) fail "RETENTION_MODE must be off or report" ;;
+esac
+case "$RETENTION_DANGLING_IMAGE_CLEANUP" in
+    yes|no) ;;
+    *) fail "RETENTION_DANGLING_IMAGE_CLEANUP must be yes or no" ;;
+esac
+nonnegative_integer "$RETENTION_SUPERSEDED_KEEP_PER_LINEAGE" ||
+    fail "RETENTION_SUPERSEDED_KEEP_PER_LINEAGE must be non-negative"
+positive_integer "$RETENTION_DISK_HIGH_WATERMARK_PERCENT" ||
+    fail "RETENTION_DISK_HIGH_WATERMARK_PERCENT must be positive"
+(( RETENTION_DISK_HIGH_WATERMARK_PERCENT <= 100 )) ||
+    fail "RETENTION_DISK_HIGH_WATERMARK_PERCENT must be <=100"
+positive_integer "$RETENTION_BUILD_CACHE_MAX_BYTES" ||
+    fail "RETENTION_BUILD_CACHE_MAX_BYTES must be positive"
+positive_integer "$RETENTION_COMMAND_TIMEOUT_SECONDS" ||
+    fail "RETENTION_COMMAND_TIMEOUT_SECONDS must be positive"
+[[ "$RETENTION_BUILDX_BUILDER" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$ ]] ||
+    fail "invalid RETENTION_BUILDX_BUILDER"
+
+run_report_stage() {
+    [[ "$RETENTION_MODE" == "report" ]] || return 0
+
+    # --check stays read-only and does not create durable evidence files.
+    if [[ "$wrapper_mode" == "check" ]]; then
+        log "report mode configured; --check does not create durable retention evidence"
+        return 0
+    fi
+
+    [[ "$RETENTION_MAIN_PROJECT_DIR" == /* && -d "$RETENTION_MAIN_PROJECT_DIR" ]] ||
+        fail "report mode requires absolute existing RETENTION_MAIN_PROJECT_DIR"
+    [[ "$RETENTION_CV_PROJECT_DIR" == /* && -d "$RETENTION_CV_PROJECT_DIR" ]] ||
+        fail "report mode requires absolute existing RETENTION_CV_PROJECT_DIR"
+    [[ -n "$RETENTION_TRUSTED_EVIDENCE_RUNS" ]] ||
+        fail "report mode requires RETENTION_TRUSTED_EVIDENCE_RUNS"
+
+    local run_id evidence_dir plan_tmp plan_file exec_tmp exec_file cache_tmp cache_file plan_sha
+    local retention_seconds=$((cleanup_days * 86400))
+    local -a trusted_args=()
+    local run
+    for run in $RETENTION_TRUSTED_EVIDENCE_RUNS; do
+        [[ "$run" =~ ^[0-9]{8}_[0-9]{6}$ ]] ||
+            fail "invalid trusted evidence run id: $run"
+        trusted_args+=(--trusted-evidence-run "$run")
+    done
+
+    run_id="$(date +'%Y%m%d_%H%M%S')"
+    evidence_dir="${RETENTION_EVIDENCE_ROOT}/${run_id}"
+    install -d -o root -g root -m 0700 "$evidence_dir"
+    plan_tmp="${evidence_dir}/retention-plan.json.tmp"
+    plan_file="${evidence_dir}/retention-plan.json"
+    exec_tmp="${evidence_dir}/retention-executor-dry-run.json.tmp"
+    exec_file="${evidence_dir}/retention-executor-dry-run.json"
+    cache_tmp="${evidence_dir}/build-cache-plan.json.tmp"
+    cache_file="${evidence_dir}/build-cache-plan.json"
+
+    "$RETENTION_REPORT" \
+        --project "main=${RETENTION_MAIN_PROJECT_DIR}" \
+        --project "cv=${RETENTION_CV_PROJECT_DIR}" \
+        "${trusted_args[@]}" \
+        --retention-seconds "$retention_seconds" \
+        --superseded-keep-per-lineage "$RETENTION_SUPERSEDED_KEEP_PER_LINEAGE" \
+        --disk-high-watermark-percent "$RETENTION_DISK_HIGH_WATERMARK_PERCENT" \
+        --build-cache-max-bytes "$RETENTION_BUILD_CACHE_MAX_BYTES" \
+        --command-timeout-seconds "$RETENTION_COMMAND_TIMEOUT_SECONDS" \
+        --pretty >"$plan_tmp"
+    chmod 0600 "$plan_tmp"
+    mv -f -- "$plan_tmp" "$plan_file"
+    plan_sha="$(sha256sum "$plan_file" | awk '{print $1}')"
+
+    local -a delete_args=()
+    while IFS= read -r image_id; do
+        [[ -n "$image_id" ]] || continue
+        delete_args+=(--delete-id "$image_id")
+    done < <(
+        python3 - "$plan_file" <<'PY'
+import json, sys
+with open(sys.argv[1], encoding="utf-8") as handle:
+    plan = json.load(handle)
+for image_id in plan.get("delete_ids", []):
+    print(image_id)
+PY
+    )
+
+    "$RETENTION_EXECUTOR" "$plan_file" \
+        --expected-plan-sha256 "$plan_sha" \
+        "${delete_args[@]}" \
+        --project "main=${RETENTION_MAIN_PROJECT_DIR}" \
+        --project "cv=${RETENTION_CV_PROJECT_DIR}" \
+        "${trusted_args[@]}" \
+        --retention-seconds "$retention_seconds" \
+        --superseded-keep-per-lineage "$RETENTION_SUPERSEDED_KEEP_PER_LINEAGE" \
+        --command-timeout-seconds "$RETENTION_COMMAND_TIMEOUT_SECONDS" \
+        --pretty >"$exec_tmp"
+    chmod 0600 "$exec_tmp"
+    mv -f -- "$exec_tmp" "$exec_file"
+
+    "$BUILD_CACHE_PLAN" "$plan_file" \
+        --builder "$RETENTION_BUILDX_BUILDER" \
+        --min-age-seconds "$retention_seconds" \
+        --command-timeout-seconds "$RETENTION_COMMAND_TIMEOUT_SECONDS" \
+        --pretty >"$cache_tmp"
+    chmod 0600 "$cache_tmp"
+    mv -f -- "$cache_tmp" "$cache_file"
+
+    log "read-only retention evidence complete: $evidence_dir"
+}
+
+run_dangling_cleanup() {
+    [[ "$RETENTION_DANGLING_IMAGE_CLEANUP" == "yes" ]] || return 0
+    [[ "$wrapper_mode" != "check" ]] || return 0
+
+    command -v docker >/dev/null 2>&1 || fail "docker command unavailable for reviewed dangling-image cleanup"
+    docker info >/dev/null 2>&1 || fail "docker daemon unavailable for reviewed dangling-image cleanup"
+
+    local retention_hours=$((cleanup_days * 24))
+    log "bounded dangling-image cleanup: until=${retention_hours}h"
+    docker image prune -f --filter "until=${retention_hours}h"
+}
+
+run_report_stage
+run_dangling_cleanup
+
+# Exact V28 core remains responsible for the rest of maintenance. Its legacy
+# Docker cleanup is disabled above, so no docker builder prune or tagged-image
+# deletion path is reachable through the scheduled wrapper.
+exec "$CORE" "$@"
