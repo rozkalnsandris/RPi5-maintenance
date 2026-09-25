@@ -1,0 +1,48 @@
+{
+  "schema": "rozkalns.github-api-access-consumer.v1",
+  "status": "ROLLOUT_SOURCE_ONLY",
+  "repository": "rozkalnsandris/RPi5-maintenance",
+  "canonical_contract": {
+    "repository": "rozkalnsandris/ops-workflows",
+    "tracking_issue": 112,
+    "umbrella_issue": 108,
+    "shared_revision": "3bb0740b5f0a8ce631d2ff79f1acc4999ff6ed2c"
+  },
+  "read_plan": {
+    "serial": true,
+    "minimum_sufficient": true,
+    "changed_files_on_demand": true,
+    "tight_polling": false,
+    "stable_dispositions": [
+      "PRIMARY_RATE_LIMIT_EXHAUSTED",
+      "SECONDARY_RATE_LIMIT_SUSPECTED",
+      "RETRY_AFTER_REQUIRED",
+      "RESET_WAIT_REQUIRED",
+      "READ_BACKOFF_REQUIRED",
+      "TRANSPORT_RATE_LIMIT_METADATA_UNAVAILABLE"
+    ]
+  },
+  "mutation_boundary": {
+    "final_preflight": "compact_exact_head",
+    "expected_head_required": true,
+    "authorization_consumed_on_dispatch": true,
+    "duplicate_mutation_after_403_429_timeout_transport": false,
+    "ambiguous_outcome_action": "READ_ONLY_RECONCILE_THEN_STOP",
+    "post_success_reconciliation": "EXACT_MAIN_MINIMAL",
+    "merge_implies_live": false
+  },
+  "synthetic_ambiguity_coverage": [
+    "post-dispatch-429",
+    "post-dispatch-timeout",
+    "post-dispatch-transport"
+  ],
+  "local_stricter_rules": {
+    "explicit_merge_authorization": true,
+    "separate_live_authorization": true,
+    "runtime_host_mutation": "EXACT_LIVE_AUTHORITY_REQUIRED",
+    "docker_systemd_apt_cleanup_reboot": "EXACT_LIVE_AUTHORITY_REQUIRED",
+    "secrets_credentials_permissions_network_storage": "EXACT_LIVE_AUTHORITY_REQUIRED",
+    "fail_closed_after_mutation_ambiguity": true,
+    "three_failed_attempts_stop": true
+  }
+}
