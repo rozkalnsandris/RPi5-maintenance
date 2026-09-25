@@ -56,5 +56,6 @@ test:
 	bash ./tests/test-maintenance-shared-lock.sh
 	python3 ./tests/test-maintenance-shared-lock-source.py
 	python3 ./tests/test-maintenance-lock-cutover.py
+	python3 ./tests/test-github-api-access-contract.py
 
 validate: bootstrap-check extraction-check static test
