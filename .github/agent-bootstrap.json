@@ -8,7 +8,8 @@
   "rules": {
     "primary": "AGENTS.md",
     "local_strict_rules": [
-      "AGENTS.md"
+      "AGENTS.md#production-trust-boundary-live-gate",
+      "AGENTS.md#scheduled-automation"
     ]
   },
   "continuation": {
