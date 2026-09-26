@@ -1,0 +1,73 @@
+name: Work-cycle v2.3 conformance
+
+on:
+  pull_request:
+    paths:
+      - '.github/agent-bootstrap.json'
+      - '.github/work-cycle-v23.json'
+      - '.github/github-api-access-v1.json'
+      - 'AGENTS.md'
+      - 'HANDOFF.md'
+      - 'docs/WORK_CYCLE_V23_ADOPTION.md'
+      - '.github/workflows/work-cycle-v23-conformance.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  conformance:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate consumer contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          base='https://raw.githubusercontent.com/rozkalnsandris/RPi5-maintenance/${{ github.event.pull_request.head.sha }}'
+          shared='https://raw.githubusercontent.com/rozkalnsandris/ops-workflows/274d58f2d9d3cb86feded2751b8f9009a4501f6b'
+          curl -fsSL "$base/.github/agent-bootstrap.json" -o /tmp/agent-bootstrap.json
+          curl -fsSL "$base/.github/work-cycle-v23.json" -o /tmp/work-cycle-v23.json
+          curl -fsSL "$base/.github/github-api-access-v1.json" -o /tmp/github-api-access-v1.json
+          curl -fsSL "$shared/scripts/agent_bootstrap_manifest.py" -o /tmp/agent_bootstrap_manifest.py
+          curl -fsSL "$shared/policy/auto-run-full-single-issue-state-v2.json" -o /tmp/auto-run-full-single-issue-state-v2.json
+          python /tmp/agent_bootstrap_manifest.py /tmp/agent-bootstrap.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          manifest = json.loads(Path('/tmp/agent-bootstrap.json').read_text())
+          adapter = json.loads(Path('/tmp/work-cycle-v23.json').read_text())
+          api = json.loads(Path('/tmp/github-api-access-v1.json').read_text())
+          shared = json.loads(Path('/tmp/auto-run-full-single-issue-state-v2.json').read_text())
+
+          assert manifest['repository'] == 'rozkalnsandris/RPi5-maintenance'
+          assert manifest['deployment_profile'] == 'custom'
+          assert manifest['automation']['fast_lane'] is True
+          assert manifest['automation']['auto_run_full'] is False
+          assert manifest['automation']['queue_mode'] == 'not-applicable'
+          assert manifest['continuation'] == {'kind': 'file', 'locator': 'HANDOFF.md'}
+
+          assert adapter['shared_revision'] == '274d58f2d9d3cb86feded2751b8f9009a4501f6b'
+          assert adapter['start_contract']['status'] == 'ADOPTED'
+          assert adapter['write_preflight']['status'] == 'ADOPTED'
+          assert adapter['write_preflight']['adapter'] == '.github/github-api-access-v1.json'
+          assert adapter['write_preflight']['duplicate_local_framework'] is False
+          assert adapter['auto_run_full']['status'] == 'NOT_APPLICABLE'
+          assert adapter['auto_run_full']['supported'] is False
+          assert adapter['authority']['merge_requires_explicit_owner_authorization'] is True
+          assert adapter['authority']['merge_implies_live'] is False
+          assert adapter['authority']['live_runtime_requires_separate_exact_authority'] is True
+          assert adapter['authority']['scheduled_maintenance_policy_unchanged'] is True
+          assert adapter['authority']['queue_vnext_96_activated'] is False
+          assert adapter['rollout']['source_governance_only'] is True
+          assert adapter['rollout']['production_deploy'] is False
+          assert adapter['rollout']['runtime_mutation'] is False
+
+          assert api['mutation_boundary']['expected_head_required'] is True
+          assert api['mutation_boundary']['authorization_consumed_on_dispatch'] is True
+          assert api['mutation_boundary']['duplicate_mutation_after_403_429_timeout_transport'] is False
+          assert api['mutation_boundary']['merge_implies_live'] is False
+          assert api['local_stricter_rules']['explicit_merge_authorization'] is True
+          assert api['local_stricter_rules']['separate_live_authorization'] is True
+
+          assert isinstance(shared, dict) and shared
+          PY
