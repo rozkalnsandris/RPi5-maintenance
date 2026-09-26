@@ -1,0 +1,44 @@
+{
+  "schema": "rozkalns.work-cycle-consumer.v23",
+  "repository": "rozkalnsandris/RPi5-maintenance",
+  "shared_revision": "274d58f2d9d3cb86feded2751b8f9009a4501f6b",
+  "tracking_issue": 124,
+  "bootstrap_manifest": {
+    "status": "ADOPTED",
+    "path": ".github/agent-bootstrap.json",
+    "deployment_profile": "custom"
+  },
+  "start_contract": {
+    "status": "ADOPTED",
+    "mode": "FAST-LANE v2.2",
+    "continuation": "HANDOFF.md",
+    "compact_terminal_response": true,
+    "local_rules_authoritative": true
+  },
+  "write_preflight": {
+    "status": "ADOPTED",
+    "contract": "WRITE_PREFLIGHT_COMPACT_V1",
+    "adapter": ".github/github-api-access-v1.json",
+    "duplicate_local_framework": false
+  },
+  "auto_run_full": {
+    "status": "NOT_APPLICABLE",
+    "supported": false,
+    "reason": "No repository-local AUTO-RUN FULL controller/schema is defined; do not invent one for fleet uniformity."
+  },
+  "authority": {
+    "merge_requires_explicit_owner_authorization": true,
+    "merge_implies_live": false,
+    "live_runtime_requires_separate_exact_authority": true,
+    "scheduled_maintenance_policy_unchanged": true,
+    "docker_systemd_apt_cleanup_reboot_authority_unchanged": true,
+    "secrets_credentials_permissions_network_storage_authority_unchanged": true,
+    "queue_vnext_96_activated": false
+  },
+  "rollout": {
+    "source_governance_only": true,
+    "production_deploy": false,
+    "runtime_mutation": false,
+    "historical_state_rewrite": false
+  }
+}
