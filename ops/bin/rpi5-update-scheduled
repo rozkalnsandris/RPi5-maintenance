@@ -51,6 +51,19 @@ nonnegative_integer() {
     [[ "${1:-}" =~ ^[0-9]+$ ]]
 }
 
+parse_trusted_evidence_runs() {
+    local raw="$1"
+    local run
+    local -a parsed_runs=()
+    local -n destination="$2"
+
+    [[ "$raw" =~ ^[0-9]{8}_[0-9]{6}(,[0-9]{8}_[0-9]{6})*$ ]] || return 2
+    IFS=',' read -r -a parsed_runs <<<"$raw"
+    for run in "${parsed_runs[@]}"; do
+        destination+=(--trusted-evidence-run "$run")
+    done
+}
+
 [[ ${EUID:-$(id -u)} -eq 0 ]] || fail "must run as root"
 
 wrapper_mode="run"
@@ -161,12 +174,8 @@ run_report_stage() {
     local run_id evidence_dir plan_tmp plan_file exec_tmp exec_file cache_tmp cache_file plan_sha
     local retention_seconds=$((cleanup_days * 86400))
     local -a trusted_args=()
-    local run
-    for run in $RETENTION_TRUSTED_EVIDENCE_RUNS; do
-        [[ "$run" =~ ^[0-9]{8}_[0-9]{6}$ ]] ||
-            fail "invalid trusted evidence run id: $run"
-        trusted_args+=(--trusted-evidence-run "$run")
-    done
+    parse_trusted_evidence_runs "$RETENTION_TRUSTED_EVIDENCE_RUNS" trusted_args ||
+        fail "invalid RETENTION_TRUSTED_EVIDENCE_RUNS"
 
     run_id="$(date +'%Y%m%d_%H%M%S')"
     evidence_dir="${RETENTION_EVIDENCE_ROOT}/${run_id}"
