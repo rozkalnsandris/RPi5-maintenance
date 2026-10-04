@@ -27,6 +27,11 @@ assert "rpi5-docker-retention-executor" in wrapper
 assert "rpi5-docker-build-cache-plan" in wrapper
 assert "RETENTION_MODE" in wrapper and "off|report" in wrapper
 assert "RETENTION_TRUSTED_EVIDENCE_RUNS" in wrapper
+assert "RETENTION_CV_PROJECT_NAME" in wrapper
+assert "RETENTION_CV_COMPOSE_FILES" in wrapper
+assert "parse_cv_compose_files" in wrapper
+assert '--compose-project-name "cv=${RETENTION_CV_PROJECT_NAME}"' in wrapper
+assert '"${cv_compose_args[@]}"' in wrapper
 assert "read-only retention evidence complete" in wrapper
 
 # Exercise the exact parser function embedded in the production wrapper without
@@ -102,6 +107,8 @@ assert "RETENTION_CONFIG" in refresh
 assert "installed V28 core identity mismatch" in refresh
 
 assert "RETENTION_MODE=off" in config
+assert "RETENTION_CV_PROJECT_NAME=" in config
+assert "RETENTION_CV_COMPOSE_FILES=" in config
 assert "RETENTION_TRUSTED_EVIDENCE_RUNS=" in config
 assert "RETENTION_BUILD_CACHE_MAX_BYTES=8589934592" in config
 assert "RETENTION_SUPERSEDED_KEEP_PER_LINEAGE=1" in config
