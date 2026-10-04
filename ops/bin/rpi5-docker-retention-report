@@ -12,16 +12,27 @@ HEX64_RE=re.compile(r'^[0-9a-f]{64}$')
 SIZE_RE=re.compile(r'^([0-9]+(?:\.[0-9]+)?)([kKmMgGtTpP]?[iI]?[bB])$')
 READONLY_PREFIXES=(
  ('docker','ps'),('docker','inspect'),('docker','image','ls'),('docker','image','inspect'),
- ('docker','compose','config'),('docker','compose','ps'),('docker','volume','ls'),
- ('docker','volume','inspect'),('docker','system','df'),('df','-P','/'),
+ ('docker','volume','ls'),('docker','volume','inspect'),('docker','system','df'),('df','-P','/'),
 )
 
 class ReportError(RuntimeError): pass
 
+def read_only_command(argv:list[str])->bool:
+    if any(tuple(argv[:len(p)])==p for p in READONLY_PREFIXES):
+        return True
+    if argv[:2]!=['docker','compose']:
+        return False
+    i=2
+    while i<len(argv) and argv[i] in ('--project-name','--file'):
+        if i+1>=len(argv) or not argv[i+1]:
+            return False
+        i+=2
+    return i<len(argv) and argv[i] in ('config','ps')
+
 class Runner:
     def __init__(self, timeout_seconds:int): self.timeout_seconds=timeout_seconds
     def run(self, argv:list[str], *, cwd:Path|None=None)->str:
-        if not any(tuple(argv[:len(p)])==p for p in READONLY_PREFIXES):
+        if not read_only_command(argv):
             raise ReportError(f'refusing non-read-only command: {argv!r}')
         try:
             cp=subprocess.run(argv,cwd=None if cwd is None else str(cwd),text=True,
