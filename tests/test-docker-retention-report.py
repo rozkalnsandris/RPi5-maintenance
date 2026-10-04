@@ -21,9 +21,11 @@ CURRENT=sid('1'); PREV=sid('2'); CAND=sid('3'); CV=sid('4'); OLD=sid('5'); CVOLD
 CID_MAIN='a'*64; CID_CV='b'*64; CID_OTHER='c'*64
 
 class FakeRunner:
-    def __init__(self,main,cv): self.main=main; self.cv=cv
+    def __init__(self,main,cv,cv_base,cv_override):
+        self.main=main; self.cv=cv; self.cv_base=cv_base; self.cv_override=cv_override
     def run(self,argv,*,cwd=None):
         t=tuple(argv); c=None if cwd is None else Path(cwd)
+        cv_compose=('docker','compose','--project-name','rozkalns-cv','--file',str(self.cv_base),'--file',str(self.cv_override))
         if t==('docker','ps','-aq'): return f'{CID_MAIN}\n{CID_CV}\n{CID_OTHER}\n'
         if t[:2]==('docker','inspect'):
             return json.dumps([
@@ -45,10 +47,10 @@ class FakeRunner:
         if t==('docker','image','inspect','ghcr.io/example/cv:latest'): return json.dumps([{'Id':CV}])
         if t==('docker','compose','config','--format','json') and c==self.main:
             return json.dumps({'services':{'web':{'image':'ghcr.io/example/app:latest'},'local':{'build':'.','image':'local/build:latest'}}})
-        if t==('docker','compose','config','--format','json') and c==self.cv:
+        if t==(*cv_compose,'config','--format','json') and c==self.cv:
             return json.dumps({'services':{'web':{'image':'ghcr.io/example/cv:latest'}}})
         if t==('docker','compose','ps','-q','web') and c==self.main: return CID_MAIN+'\n'
-        if t==('docker','compose','ps','-q','web') and c==self.cv: return CID_CV+'\n'
+        if t==(*cv_compose,'ps','-q','web') and c==self.cv: return CID_CV+'\n'
         if t==('docker','volume','ls','-q'): return 'db_data\n'+'f'*64+'\n'
         if t[:3]==('docker','volume','inspect'):
             return json.dumps([{'Name':'db_data','Labels':{'com.docker.compose.project':'main','com.docker.compose.volume':'db'}},{'Name':'f'*64,'Labels':None}])
@@ -60,6 +62,8 @@ class FakeRunner:
 
 with tempfile.TemporaryDirectory() as td:
     root=Path(td); main=root/'main'; cv=root/'cv'; evidence=root/'evidence'; main.mkdir(); cv.mkdir(); evidence.mkdir()
+    cv_base=root/'rozkalns-cv.yml'; cv_override=root/'rozkalns-cv-rpi5.yaml'
+    cv_base.write_text('services: {}\n'); cv_override.write_text('services: {}\n')
     run=evidence/'20260920_022000'; run.mkdir()
     phases=[]
     for project in ('main','cv'):
@@ -70,7 +74,18 @@ with tempfile.TemporaryDirectory() as td:
     (run/'phases.jsonl').write_text('\n'.join(json.dumps(x) for x in phases)+'\n')
     (run/'docker-main-images-before.tsv').write_text(f'ghcr.io/example/app:latest\t{PREV}\tv1\n')
     (run/'docker-cv-images-before.tsv').write_text(f'ghcr.io/example/cv:latest\t{CV}\tv1\n')
-    raw=mod.collect_raw(FakeRunner(main,cv),[('main',main),('cv',cv)],evidence,['20260920_022000'],1789000000,14*86400,0,80,8*1024**3)
+    projects=[('main',main),('cv',cv)]
+    compose_cli=mod.build_compose_cli(
+        projects,
+        [('cv','rozkalns-cv')],
+        [('cv',cv_base),('cv',cv_override)],
+    )
+    assert compose_cli['cv']==[
+        '--project-name','rozkalns-cv',
+        '--file',str(cv_base),
+        '--file',str(cv_override),
+    ]
+    raw=mod.collect_raw(FakeRunner(main,cv,cv_base,cv_override),projects,evidence,['20260920_022000'],1789000000,14*86400,0,80,8*1024**3,compose_cli)
     assert raw['schema']=='rpi5-docker-runtime-inventory.v1'
     assert len(raw['managed_services'])==2
     assert raw['rollback_evidence']==[{'project':'main','service':'web','source':'v28-compose-evidence','phase':'pre-mutation','outcome':'success','image_id':PREV}]
