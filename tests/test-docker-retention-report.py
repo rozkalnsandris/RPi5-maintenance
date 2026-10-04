@@ -107,6 +107,16 @@ with tempfile.TemporaryDirectory() as td:
     assert decisions[OTHER]['action']=='protect'
     assert decisions[OTHER]['role']=='container-referenced'
 
+assert mod.read_only_command([
+    'docker','compose','--project-name','rozkalns-cv',
+    '--file','/etc/rozkalns-simple-deployer/compose/rozkalns-cv.yml',
+    '--file','/var/lib/rozkalns-simple-deployer/overrides/rozkalns-cv-rpi5.yaml',
+    'config','--format','json',
+])
+assert not mod.read_only_command([
+    'docker','compose','--project-name','rozkalns-cv','up','-d',
+])
+
 try:
     mod.Runner(1).run(['docker','image','prune','-a'])
 except mod.ReportError as exc:
