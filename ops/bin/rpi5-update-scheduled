@@ -64,6 +64,20 @@ parse_trusted_evidence_runs() {
     done
 }
 
+parse_cv_compose_files() {
+    local raw="$1"
+    local compose_file
+    local -a parsed_files=()
+    local -n destination="$2"
+
+    [[ -n "$raw" && "$raw" != ,* && "$raw" != *, && "$raw" != *,,* ]] || return 2
+    IFS=',' read -r -a parsed_files <<<"$raw"
+    for compose_file in "${parsed_files[@]}"; do
+        [[ "$compose_file" == /* && -f "$compose_file" && ! -L "$compose_file" ]] || return 2
+        destination+=(--compose-file "cv=$compose_file")
+    done
+}
+
 [[ ${EUID:-$(id -u)} -eq 0 ]] || fail "must run as root"
 
 wrapper_mode="run"
@@ -132,6 +146,8 @@ RETENTION_BUILDX_BUILDER="${RETENTION_BUILDX_BUILDER:-default}"
 RETENTION_COMMAND_TIMEOUT_SECONDS="${RETENTION_COMMAND_TIMEOUT_SECONDS:-15}"
 RETENTION_MAIN_PROJECT_DIR="${RETENTION_MAIN_PROJECT_DIR:-}"
 RETENTION_CV_PROJECT_DIR="${RETENTION_CV_PROJECT_DIR:-}"
+RETENTION_CV_PROJECT_NAME="${RETENTION_CV_PROJECT_NAME:-}"
+RETENTION_CV_COMPOSE_FILES="${RETENTION_CV_COMPOSE_FILES:-}"
 RETENTION_TRUSTED_EVIDENCE_RUNS="${RETENTION_TRUSTED_EVIDENCE_RUNS:-}"
 
 case "$RETENTION_MODE" in
@@ -168,14 +184,19 @@ run_report_stage() {
         fail "report mode requires absolute existing RETENTION_MAIN_PROJECT_DIR"
     [[ "$RETENTION_CV_PROJECT_DIR" == /* && -d "$RETENTION_CV_PROJECT_DIR" ]] ||
         fail "report mode requires absolute existing RETENTION_CV_PROJECT_DIR"
+    [[ "$RETENTION_CV_PROJECT_NAME" =~ ^[a-z0-9][a-z0-9_-]*$ ]] ||
+        fail "report mode requires valid RETENTION_CV_PROJECT_NAME"
     [[ -n "$RETENTION_TRUSTED_EVIDENCE_RUNS" ]] ||
         fail "report mode requires RETENTION_TRUSTED_EVIDENCE_RUNS"
 
     local run_id evidence_dir plan_tmp plan_file exec_tmp exec_file cache_tmp cache_file plan_sha
     local retention_seconds=$((cleanup_days * 86400))
     local -a trusted_args=()
+    local -a cv_compose_args=()
     parse_trusted_evidence_runs "$RETENTION_TRUSTED_EVIDENCE_RUNS" trusted_args ||
         fail "invalid RETENTION_TRUSTED_EVIDENCE_RUNS"
+    parse_cv_compose_files "$RETENTION_CV_COMPOSE_FILES" cv_compose_args ||
+        fail "invalid RETENTION_CV_COMPOSE_FILES"
 
     run_id="$(date +'%Y%m%d_%H%M%S')"
     evidence_dir="${RETENTION_EVIDENCE_ROOT}/${run_id}"
@@ -190,6 +211,8 @@ run_report_stage() {
     "$RETENTION_REPORT" \
         --project "main=${RETENTION_MAIN_PROJECT_DIR}" \
         --project "cv=${RETENTION_CV_PROJECT_DIR}" \
+        --compose-project-name "cv=${RETENTION_CV_PROJECT_NAME}" \
+        "${cv_compose_args[@]}" \
         "${trusted_args[@]}" \
         --retention-seconds "$retention_seconds" \
         --superseded-keep-per-lineage "$RETENTION_SUPERSEDED_KEEP_PER_LINEAGE" \
@@ -220,6 +243,8 @@ PY
         "${delete_args[@]}" \
         --project "main=${RETENTION_MAIN_PROJECT_DIR}" \
         --project "cv=${RETENTION_CV_PROJECT_DIR}" \
+        --compose-project-name "cv=${RETENTION_CV_PROJECT_NAME}" \
+        "${cv_compose_args[@]}" \
         "${trusted_args[@]}" \
         --retention-seconds "$retention_seconds" \
         --superseded-keep-per-lineage "$RETENTION_SUPERSEDED_KEEP_PER_LINEAGE" \
