@@ -284,7 +284,7 @@ try:
             inventory_mod=object(),
             planner_mod=object(),
             projects=[("main", Path("/main")), ("cv", Path("/cv"))],
-        compose_cli={},
+            compose_cli={},
             evidence_root=Path("/evidence"),
             trusted_runs=["20260920_022000"],
             retention_seconds=100,
