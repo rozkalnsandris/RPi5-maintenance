@@ -92,6 +92,7 @@ def fresh_plan(
     planner_mod,
     *,
     projects,
+    compose_cli,
     evidence_root: Path,
     trusted_runs: list[str],
     retention_seconds: int,
@@ -111,6 +112,7 @@ def fresh_plan(
             reserve,
             high_percent,
             cache_max_bytes,
+            compose_cli,
         )
         return planner_mod.build_plan(inventory_mod.build_inventory(raw))
     except (OSError, ValueError, report_mod.ReportError) as exc:
@@ -126,6 +128,7 @@ def run_executor(
     inventory_mod,
     planner_mod,
     projects,
+    compose_cli,
     evidence_root: Path,
     trusted_runs: list[str],
     retention_seconds: int,
@@ -146,6 +149,7 @@ def run_executor(
         inventory_mod,
         planner_mod,
         projects=projects,
+        compose_cli=compose_cli,
         evidence_root=evidence_root,
         trusted_runs=trusted_runs,
         retention_seconds=retention_seconds,
@@ -206,6 +210,7 @@ def run_executor(
                 inventory_mod,
                 planner_mod,
                 projects=projects,
+                compose_cli=compose_cli,
                 evidence_root=evidence_root,
                 trusted_runs=trusted_runs,
                 retention_seconds=retention_seconds,
@@ -312,6 +317,8 @@ def main() -> int:
     ap.add_argument("--expected-plan-sha256", required=True)
     ap.add_argument("--delete-id", action="append", default=[], dest="delete_ids")
     ap.add_argument("--project", action="append", type=report_mod.parse_project, required=True, metavar="NAME=/PATH")
+    ap.add_argument("--compose-project-name", action="append", type=report_mod.parse_compose_project_name, default=[], metavar="NAME=PROJECT")
+    ap.add_argument("--compose-file", action="append", type=report_mod.parse_compose_file, default=[], metavar="NAME=/PATH")
     ap.add_argument("--evidence-root", type=Path, default=Path("/var/log/rpi5-maintenance"))
     ap.add_argument("--trusted-evidence-run", action="append", default=[])
     ap.add_argument("--retention-seconds", type=report_mod.nonneg, required=True)
@@ -325,6 +332,10 @@ def main() -> int:
     names = [item[0] for item in args.project]
     if len(names) != len(set(names)) or set(names) != {"main", "cv"} or len(names) != 2:
         ap.error("exactly --project main=/... and --project cv=/... are required")
+    try:
+        compose_cli = report_mod.build_compose_cli(args.project, args.compose_project_name, args.compose_file)
+    except report_mod.ReportError as exc:
+        ap.error(str(exc))
     if not args.trusted_evidence_run:
         ap.error("at least one --trusted-evidence-run is required")
     if args.apply and args.evidence_output is None:
@@ -342,6 +353,7 @@ def main() -> int:
             inventory_mod=inventory_mod,
             planner_mod=planner_mod,
             projects=args.project,
+            compose_cli=compose_cli,
             evidence_root=args.evidence_root,
             trusted_runs=args.trusted_evidence_run,
             retention_seconds=args.retention_seconds,
