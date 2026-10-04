@@ -29,15 +29,22 @@ done
 
 docker info >/dev/null || fail 'Docker daemon is unavailable'
 
-mapfile -t expected_services < <(
+expected_text="$(
     cd "$MAIN_COMPOSE_DIR"
     docker compose config --quiet
     docker compose config --services | sort -u
-)
-mapfile -t running_services < <(
+)" || fail 'cannot read main Compose services'
+[[ -n "$expected_text" ]] || fail 'main Compose project has no services'
+mapfile -t expected_services <<<"$expected_text"
+
+running_text="$(
     cd "$MAIN_COMPOSE_DIR"
     docker compose ps --services --status running | sort -u
-)
+)" || fail 'cannot read running main Compose services'
+running_services=()
+if [[ -n "$running_text" ]]; then
+    mapfile -t running_services <<<"$running_text"
+fi
 
 declare -A running=()
 for service in "${running_services[@]}"; do running["$service"]=1; done
@@ -47,11 +54,13 @@ for service in "${expected_services[@]}"; do
 done
 (( ${#missing[@]} == 0 )) || fail "main Compose services not running: ${missing[*]}"
 
-mapfile -t unhealthy < <(docker ps --filter health=unhealthy --format '{{.Names}}' | sort -u)
-(( ${#unhealthy[@]} == 0 )) || fail "unhealthy containers: ${unhealthy[*]}"
+unhealthy_text="$(docker ps --filter health=unhealthy --format '{{.Names}}' | sort -u)" ||
+    fail 'cannot inspect unhealthy containers'
+[[ -z "$unhealthy_text" ]] || fail "unhealthy containers: $unhealthy_text"
 
-mapfile -t restarting < <(docker ps --filter status=restarting --format '{{.Names}}' | sort -u)
-(( ${#restarting[@]} == 0 )) || fail "restarting containers: ${restarting[*]}"
+restarting_text="$(docker ps --filter status=restarting --format '{{.Names}}' | sort -u)" ||
+    fail 'cannot inspect restarting containers'
+[[ -z "$restarting_text" ]] || fail "restarting containers: $restarting_text"
 
 root_use="$(df -P / | awk 'NR==2 {gsub(/%/, "", $5); print $5}')"
 [[ "$root_use" =~ ^[0-9]+$ ]] || fail 'cannot read root filesystem usage'
