@@ -3,7 +3,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 POLICY = ROOT / "ops/config/service-health.tsv"
-FIXTURE = ROOT / "tests/fixtures/service-health/runtime-containers-2026-09-20.txt"
+FIXTURE = ROOT / "tests/fixtures/service-health/runtime-containers-2026-10-04.txt"
 
 FIELDS = (
     "service_id", "container_name", "owner", "lifecycle", "required_state",
@@ -50,6 +50,9 @@ def test_runtime_snapshot_is_fully_classified():
     assert set(runtime) == set(by_container)
     assert by_container["rozkalns-weather-public-weather-1"]["classification"] == "observe"
     assert by_container["rozkalns-weather-public-weather-1"]["owner"] == "rozkalns_weather"
+    assert by_container["rozkalns-cv-cv-1"]["classification"] == "required"
+    assert by_container["rozkalns-cv-cv-1"]["docker_health"] == "required"
+    assert "cvbot" not in by_container
     for name in runtime:
         row = by_container[name]
         if row["lifecycle"] == "preview":
