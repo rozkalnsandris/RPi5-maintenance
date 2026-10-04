@@ -1,3 +1,11 @@
-# Extracted runtime source
+# Active runtime source
 
-Phase-1 extraction copies the canonical maintenance runtime files from `RPi5_main` into their existing `ops/...` paths. This placeholder intentionally does not contain a rewritten updater. Run `scripts/extract_from_rpi5_main.sh` against the exact baseline checkout, then verify with `scripts/verify_extraction.sh`.
+The scheduled maintenance runtime is intentionally small:
+
+- `bin/rpi5-update`
+- `bin/rpi5-monitor`
+- `bin/rpi5-maintenance-notify`
+- `lib/rpi5-maintenance-telegram.py`
+- matching `systemd` service/timer units
+
+Application deployers, Uptime Kuma, Hermes maintenance and backup logic are separate concerns. Legacy activation/retention/health-classifier tooling is not part of the active scheduled path.

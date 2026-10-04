@@ -1,11 +1,38 @@
-# rpi5-maintenance — kopsavilkums latviski
+# rpi5-maintenance — vienkāršais modelis
 
-Šis repo kļūst par atsevišķu RPi5 uzturēšanas vadības slāni. Tas nepieder nevienai konkrētai lietotnei; tas koordinē APT, Docker Compose atjaunināšanu, veselības pārbaudes, ierobežotu atkopšanu, reboot lēmumu, pierādījumu saglabāšanu un paziņojumus.
+Šis repo vairs nav atsevišķs sarežģīts “maintenance control-plane”. Tas ir mazs RPi5 auto-update un monitor komplekts.
 
-Galvenais princips: **update kļūda nav automātiski sistēmas kļūda**. Ja update komanda atgriež kļūdu, bet nav palikusi bīstama daļēja mutation un visi servisi ir pārbaudīti kā veseli, rezultāts var būt `RECOVERED` vai `DEGRADED`, nevis `CRITICAL`.
+## Weekly update
 
-Hermes/log-doctor ideja tiek saglabāta, bet padarīta deterministiska: tas drīkst izpildīt tikai iepriekš definētus, ierobežotus remediation playbookus. AI nedrīkst pats izdomāt un palaist patvaļīgas root/Docker/config komandas.
+Svētdien 02:20 `systemd` palaiž vienu `rpi5-update` skriptu:
 
-Pirmajā migrācijas posmā esošais kods no `RPi5_main` tiek pārnests gandrīz 1:1 un tiek pierādīta testu/paritātes atbilstība. Tikai pēc tam atsevišķos PR tiek ieviests labāks `stderr`/evidence, `compose up --wait`, precīzāks failure modelis, stacku neatkarības noteikumi un systemd/application backoff.
+1. APT update + konservatīvs upgrade bez pakotņu izņemšanas;
+2. `/home/andris/docker` image pull + `docker compose up`;
+3. 14 dienu APT/journal/dangling-image cleanup;
+4. BuildKit cache tiek turēts zem konfigurēta limita;
+5. tiek palaists `rpi5-monitor`;
+6. reboot tikai tad, ja `/run/reboot-required` to prasa.
 
-Production nepāriet uz jauno repo automātiski. Production izmanto tikai konkrētu, pārbaudītu un autorizētu release/commit.
+CV, Weather, Coloring Pages un citu app-specific simple-deployer topoloģiju weekly updater vairs nemēģina atklāt vai pārvaldīt.
+
+## Daily monitor
+
+Katru dienu 09:00 viens īss skripts pārbauda:
+
+- `docker`, `ssh`, `cloudflared`;
+- vai visi `/home/andris/docker` Compose servisi ir `running`;
+- vai nav `unhealthy`/`restarting` konteineru;
+- vai root disks nav pārsniedzis slieksni.
+
+Publiskās lapas jau pārbauda Uptime Kuma, tāpēc monitorā nav otra URL saraksta un nav `service-health.tsv` matricas.
+
+## Ko izmetam no aktīvās plūsmas
+
+- Docker retention planner/inventory/executor;
+- `docker system df` report pipeline;
+- health classifier/grace/TSV sistēmu;
+- īpašu CV Compose topoloģijas modelēšanu maintenance skriptā;
+- updater-specifisku rclone/Hermes loģiku;
+- runtime doctor/auto-remediation slāni.
+
+Mērķis: pēc iespējas mazāk koda un mazāk vietu, kur maintenance var iesprūst.
