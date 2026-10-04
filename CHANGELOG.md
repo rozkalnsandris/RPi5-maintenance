@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased — simple maintenance runtime
+
+- Replace the large updater plus retention wrapper with one small weekly updater.
+- Replace the service-health policy matrix/classifier monitor with one small read-only host/Docker monitor.
+- Use systemd oneshot/timer/OnFailure primitives directly instead of a scheduled activation/classifier framework.
+- Keep APT conservative with `upgrade --with-new-pkgs --no-remove`.
+- Limit Docker cleanup to dangling images and bounded BuildKit cache; remove the custom retention planner/report/executor path and its `docker system df` dependency.
+- Stop rediscovering app-specific/simple-deployer projects from generic maintenance; the weekly Compose scope is only `/home/andris/docker`.
+- Keep public endpoint monitoring with Uptime Kuma and Hermes/rclone special handling outside the generic maintenance runtime.
+- No LIVE deployment is part of this source change.
+
 ## Unreleased — V28 production activation gate
 
 - Add a version-specific `0.2.0`/V28 activation operator with explicit read-only `--preflight` and mutation-only `--apply`.
