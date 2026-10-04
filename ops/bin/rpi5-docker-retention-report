@@ -7,20 +7,32 @@ from typing import Any
 RUN_ID_RE=re.compile(r'^[0-9]{8}_[0-9]{6}$')
 IMAGE_ID_RE=re.compile(r'^sha256:[0-9a-f]{64}$')
 PROJECT_RE=re.compile(r'^[A-Za-z0-9._:-]+$')
+COMPOSE_PROJECT_NAME_RE=re.compile(r'^[a-z0-9][a-z0-9_-]*$')
 HEX64_RE=re.compile(r'^[0-9a-f]{64}$')
 SIZE_RE=re.compile(r'^([0-9]+(?:\.[0-9]+)?)([kKmMgGtTpP]?[iI]?[bB])$')
 READONLY_PREFIXES=(
  ('docker','ps'),('docker','inspect'),('docker','image','ls'),('docker','image','inspect'),
- ('docker','compose','config'),('docker','compose','ps'),('docker','volume','ls'),
- ('docker','volume','inspect'),('docker','system','df'),('df','-P','/'),
+ ('docker','volume','ls'),('docker','volume','inspect'),('docker','system','df'),('df','-P','/'),
 )
 
 class ReportError(RuntimeError): pass
 
+def read_only_command(argv:list[str])->bool:
+    if any(tuple(argv[:len(p)])==p for p in READONLY_PREFIXES):
+        return True
+    if argv[:2]!=['docker','compose']:
+        return False
+    i=2
+    while i<len(argv) and argv[i] in ('--project-name','--file'):
+        if i+1>=len(argv) or not argv[i+1]:
+            return False
+        i+=2
+    return i<len(argv) and argv[i] in ('config','ps')
+
 class Runner:
     def __init__(self, timeout_seconds:int): self.timeout_seconds=timeout_seconds
     def run(self, argv:list[str], *, cwd:Path|None=None)->str:
-        if not any(tuple(argv[:len(p)])==p for p in READONLY_PREFIXES):
+        if not read_only_command(argv):
             raise ReportError(f'refusing non-read-only command: {argv!r}')
         try:
             cp=subprocess.run(argv,cwd=None if cwd is None else str(cwd),text=True,
@@ -115,14 +127,16 @@ def collect_images(r:Runner):
         out[iid]={'id':iid,'created_epoch':created_epoch(row.get('Created')),'size_bytes':size,'repositories':image_repos(row)}
     return out
 
-def compose_config(r:Runner,path:Path)->dict[str,Any]:
+def compose_config(r:Runner,path:Path,compose_args=())->dict[str,Any]:
     if not path.is_dir(): raise ReportError(f'Compose directory missing: {path}')
-    v=parse_json(r.run(['docker','compose','config','--format','json'],cwd=path),f'compose config {path}')
+    argv=['docker','compose',*compose_args,'config','--format','json']
+    v=parse_json(r.run(argv,cwd=path),f'compose config {path}')
     if not isinstance(v,dict) or not isinstance(v.get('services'),dict): raise ReportError(f'invalid Compose config: {path}')
     return v
 
-def compose_container(r:Runner,path:Path,service:str)->str:
-    ids=[x for x in r.run(['docker','compose','ps','-q',service],cwd=path).split() if x]
+def compose_container(r:Runner,path:Path,service:str,compose_args=())->str:
+    argv=['docker','compose',*compose_args,'ps','-q',service]
+    ids=[x for x in r.run(argv,cwd=path).split() if x]
     if len(ids)!=1: raise ReportError(f'expected one running container for {path}:{service}, got {len(ids)}')
     return ids[0]
 
@@ -131,10 +145,11 @@ def local_image_id(r:Runner,ref:str)->str:
     if len(rows)!=1 or not isinstance(rows[0],dict): raise ReportError(f'expected one local image for {ref}')
     return image_id(rows[0].get('Id'),f'candidate {ref}')
 
-def collect_services(r:Runner,projects,containers_by_id,images):
-    managed=[]; refs={}; seen=set()
+def collect_services(r:Runner,projects,containers_by_id,images,compose_cli=None):
+    managed=[]; refs={}; seen=set(); compose_cli=compose_cli or {}
     for project,path in projects:
-        cfg=compose_config(r,path)
+        extra=compose_cli.get(project,[])
+        cfg=compose_config(r,path,extra)
         for service in sorted(cfg['services']):
             spec=cfg['services'][service]
             if not isinstance(spec,dict): raise ReportError(f'invalid service {project}/{service}')
@@ -143,7 +158,7 @@ def collect_services(r:Runner,projects,containers_by_id,images):
             if not isinstance(ref,str) or not ref: raise ReportError(f'registry service missing image: {project}/{service}')
             key=(project,service)
             if key in seen: raise ReportError(f'duplicate service: {project}/{service}')
-            seen.add(key); cid=compose_container(r,path,service); c=containers_by_id.get(cid)
+            seen.add(key); cid=compose_container(r,path,service,extra); c=containers_by_id.get(cid)
             if c is None: raise ReportError(f'Compose container absent from global inventory: {project}/{service}')
             current=image_id(c.get('Image'),f'current {project}/{service}'); candidate=local_image_id(r,ref)
             if current not in images or candidate not in images: raise ReportError(f'unknown image for {project}/{service}')
@@ -248,12 +263,12 @@ def root_used(r:Runner)->int:
     if not 0<=n<=100: raise ReportError('df percent out of range')
     return n
 
-def collect_raw(r:Runner,projects,root,run_ids,now,retention,reserve,high,cache_max):
+def collect_raw(r:Runner,projects,root,run_ids,now,retention,reserve,high,cache_max,compose_cli=None):
     containers,by_id=collect_containers(r); images=collect_images(r)
     if not images: raise ReportError('local image inventory empty')
     for c in containers:
         if c['image_id'] not in images: raise ReportError(f"container image absent from image inventory: {c['name']}")
-    managed,refs=collect_services(r,projects,by_id,images); by_name={x['name']:x['image_id'] for x in containers}
+    managed,refs=collect_services(r,projects,by_id,images,compose_cli); by_name={x['name']:x['image_id'] for x in containers}
     rollback=collect_rollback(root,run_ids,managed,refs,images,by_name)
     return {'schema':'rpi5-docker-runtime-inventory.v1','policy':{'now_epoch':now,'retention_seconds':retention,'superseded_keep_per_lineage':reserve,'root_used_percent':root_used(r),'disk_high_watermark_percent':high},'images':sorted(images.values(),key=lambda x:x['id']),'containers':containers,'managed_services':managed,'rollback_evidence':rollback,'volumes':collect_volumes(r),'build_cache':collect_cache(r,cache_max)}
 
@@ -264,6 +279,37 @@ def parse_project(v:str):
     p=Path(raw)
     if not p.is_absolute(): raise argparse.ArgumentTypeError('project path must be absolute')
     return name,p
+
+def parse_compose_project_name(v:str):
+    if '=' not in v: raise argparse.ArgumentTypeError('must be NAME=COMPOSE_PROJECT')
+    name,value=v.split('=',1)
+    if not PROJECT_RE.fullmatch(name): raise argparse.ArgumentTypeError('invalid logical project name')
+    if not COMPOSE_PROJECT_NAME_RE.fullmatch(value): raise argparse.ArgumentTypeError('invalid Compose project name')
+    return name,value
+
+def parse_compose_file(v:str):
+    if '=' not in v: raise argparse.ArgumentTypeError('must be NAME=/absolute/compose-file')
+    name,raw=v.split('=',1)
+    if not PROJECT_RE.fullmatch(name): raise argparse.ArgumentTypeError('invalid logical project name')
+    p=Path(raw)
+    if not p.is_absolute(): raise argparse.ArgumentTypeError('Compose file path must be absolute')
+    return name,p
+
+def build_compose_cli(projects,project_names,compose_files):
+    known={name for name,_ in projects}
+    out={name:[] for name in known}
+    seen_names=set()
+    for name,value in project_names:
+        if name not in known: raise ReportError(f'Compose project-name references unknown logical project: {name}')
+        if name in seen_names: raise ReportError(f'duplicate Compose project-name for logical project: {name}')
+        seen_names.add(name); out[name].extend(['--project-name',value])
+    seen_files=set()
+    for name,path in compose_files:
+        if name not in known: raise ReportError(f'Compose file references unknown logical project: {name}')
+        key=(name,str(path))
+        if key in seen_files: raise ReportError(f'duplicate Compose file for logical project: {name}:{path}')
+        seen_files.add(key); out[name].extend(['--file',str(path)])
+    return {name:args for name,args in out.items() if args}
 
 def pos(v:str):
     try:n=int(v)
@@ -280,6 +326,8 @@ def nonneg(v:str):
 def main()->int:
     ap=argparse.ArgumentParser(description='Read-only Docker retention collector/report; no Docker mutations.')
     ap.add_argument('--project',action='append',type=parse_project,required=True,metavar='NAME=/PATH')
+    ap.add_argument('--compose-project-name',action='append',type=parse_compose_project_name,default=[],metavar='NAME=PROJECT')
+    ap.add_argument('--compose-file',action='append',type=parse_compose_file,default=[],metavar='NAME=/PATH')
     ap.add_argument('--evidence-root',type=Path,default=Path('/var/log/rpi5-maintenance'))
     ap.add_argument('--trusted-evidence-run',action='append',default=[])
     ap.add_argument('--retention-seconds',type=nonneg,required=True)
@@ -296,9 +344,13 @@ def main()->int:
     names=[x[0] for x in a.project]
     if len(names)!=len(set(names)): ap.error('duplicate --project name')
     if set(names)!={'main','cv'} or len(names)!=2: ap.error('exactly --project main=/... and --project cv=/... are required')
+    try:
+        compose_cli=build_compose_cli(a.project,a.compose_project_name,a.compose_file)
+    except ReportError as exc:
+        ap.error(str(exc))
     now=a.now_epoch or int(dt.datetime.now(tz=dt.timezone.utc).timestamp())
     try:
-        raw=collect_raw(Runner(a.command_timeout_seconds),a.project,a.evidence_root,a.trusted_evidence_run,now,a.retention_seconds,a.superseded_keep_per_lineage,a.disk_high_watermark_percent,a.build_cache_max_bytes)
+        raw=collect_raw(Runner(a.command_timeout_seconds),a.project,a.evidence_root,a.trusted_evidence_run,now,a.retention_seconds,a.superseded_keep_per_lineage,a.disk_high_watermark_percent,a.build_cache_max_bytes,compose_cli)
         if a.raw_inventory: result=raw
         else:
             root=Path(__file__).resolve().parents[1]

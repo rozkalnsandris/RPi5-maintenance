@@ -3,8 +3,8 @@
 adguard	adguard	RPi5-maintenance	production	running	required	none	-	180	3	required	Docker health is authoritative; public reachability remains a separate route gate.
 autoheal	autoheal	RPi5-maintenance	production	running	required	none	-	120	3	required	Docker health is the bounded functional signal for the helper container.
 chromadb	chromadb	RPi5-maintenance	production	running	absent	exception	-	180	3	required	No stable unauthenticated application probe is canonicalized yet; process-only acceptance is prohibited until owner probe is defined.
-cv	cv	rozkalns_cv	production	running	absent	http	http://127.0.0.1:8088/	120	3	required	Local nginx HTTP gate proves the application serves content despite no Docker HEALTHCHECK.
-cvbot	cvbot	rozkalns_cv	production	running	required	none	-	180	3	required	Docker health is authoritative for the bot container.
+coloring-pages	coloring-pages-public-coloring-pages-1	coloring-pages	production	running	required	none	-	180	3	observe	Coloring Pages is externally owned; maintenance records Docker health without taking mutation ownership.
+cv	rozkalns-cv-cv-1	rozkalns_cv	production	running	required	none	-	180	3	required	Simple-deployer CV exposes a Docker healthcheck; public reachability remains a separate route gate.
 grafana	grafana	RPi5-maintenance	production	running	absent	http	https://grafana.rozkalns.net/	240	3	required	Public HTTP gate proves Grafana plus ingress; running alone is insufficient.
 grafana-renderer	grafana-renderer	RPi5-maintenance	production	running	required	none	-	180	3	required	Docker health is authoritative for the renderer.
 hermes-blog	hermes-blog	RPi5-maintenance	production	running	absent	http	http://127.0.0.1:8089/	120	3	required	Local HTTP gate proves the standalone nginx workload serves content.

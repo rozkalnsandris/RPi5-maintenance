@@ -44,7 +44,7 @@ grep -Fq 'rpi5_service_health_policy_max_grace' "$post"
 grep -Fq 'state="${states[$container_name]:-missing}"' "$post"
 grep -Fq 'age=0' "$post"
 
-grep -Fq $'cv\tcv\trozkalns_cv\tproduction\trunning\tabsent\thttp\thttp://127.0.0.1:8088/' "$policy"
+grep -Fq $'cv\trozkalns-cv-cv-1\trozkalns_cv\tproduction\trunning\trequired\tnone\t-' "$policy"
 grep -Fq $'hermes-blog\thermes-blog\tRPi5-maintenance\tproduction\trunning\tabsent\thttp\thttp://127.0.0.1:8089/' "$policy"
 
 grep -Fq 'https://rozkalns.net/' "$monitor"
