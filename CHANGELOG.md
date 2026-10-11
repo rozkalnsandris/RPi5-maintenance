@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased — source-only repository cleanup (2026-10-11)
+
+- Retire unconsumed legacy V21–V28 activators, policy/helper libraries, old
+  tests/fixtures, stale documentation and extraction bootstrap metadata from
+  the working tree; historical sources stay in Git history.
+- Retain byte-identical active updater/monitor/notifier/systemd source and
+  backup wrapper/core/shared locking components.
+- Align active docs/configuration/bootstrap, add backup-lock and scope tests,
+  and keep production mutation explicitly outside the cleanup PR.
+
+
 ## Unreleased — simple maintenance runtime
 
 - Replace the large updater plus retention wrapper with one small weekly updater.

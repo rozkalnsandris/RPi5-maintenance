@@ -1,0 +1,9 @@
+# Optional host-owned Bash configuration for /etc/rpi-update.conf.
+# The updater sources this as root; keep root-owned, not group/world writable.
+# Do not put tokens, secrets, or untrusted commands in this file.
+# All values below are already the defaults.
+MAIN_COMPOSE_DIR='/home/andris/docker'
+CLEANUP_RETENTION_DAYS=14
+BUILD_CACHE_MAX='8gb'
+REBOOT_POLICY='if-needed'
+MONITOR_BIN='/usr/local/sbin/rpi5-monitor'

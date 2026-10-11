@@ -1,28 +1,13 @@
-# Release and versioning
+# Exact source and production installation
 
-## Principle
+1. Review source in a PR and pass required checks.
+2. Merge only with explicit owner authorization.
+3. Bind a proposed installation to an **immutable full Git commit** and
+   verify the expected source blob/SHA-256 and current installed file.
+4. Apply only the separately LIVE-authorized target mutation and verify
+   installed identity/permissions/health without broad maintenance reruns.
 
-Production never tracks the moving `main` branch.
-
-## Release flow
-
-1. source PR reviewed and CI green;
-2. merge to `main`;
-3. create immutable version/tag and release metadata;
-4. verify release artifact/provenance;
-5. separately authorize production activation of that exact version;
-6. preflight current production state;
-7. install/activate transactionally;
-8. verify and retain rollback target.
-
-## Versioning
-
-Use semantic versioning after parity release. Before the first stable production release, `0.x` versions may evolve contracts, but every production candidate is still immutable and reviewable.
-
-Recommended milestones:
-
-- `0.1.0`: extraction/parity source only;
-- `0.2.0`: evidence/error-capture redesign;
-- `0.3.0`: transaction classification + bounded doctor;
-- `0.4.0`: dependency/backoff hardening;
-- `1.0.0`: proven stable release contract and production cutover complete.
+GitHub `main` does not automatically deploy to RPi5.
+The repository intentionally has no active V21–V28 activation framework.
+Old release/provenance procedures remain available in Git history.
+A recovery/rollback must be independently authorized and scope-checked.

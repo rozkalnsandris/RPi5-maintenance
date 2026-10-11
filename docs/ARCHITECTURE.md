@@ -1,58 +1,31 @@
 # Simple maintenance architecture
 
-## Active runtime
-
-There are only two scheduled maintenance entrypoints.
+Two scheduled entrypoints; no legacy activation or doctor framework:
 
 ```text
 Sunday 02:20
-systemd timer -> rpi5-update (oneshot)
-                  |-- APT
-                  |-- main Docker Compose
-                  |-- bounded cleanup
-                  |-- rpi5-monitor
-                  `-- reboot if required
+rpi5-update.timer -> rpi5-update.service -> rpi5-update
+  preflight -> shared backup lock -> conservative APT -> Docker/DNS ready
+  -> main Compose pull -> main Compose up --wait -> bounded cleanup
+  -> rpi5-monitor -> reboot only if required and earlier phases succeeded
 
 Daily 09:00
-systemd timer -> rpi5-monitor (oneshot)
-                  |-- docker/ssh/cloudflared active
-                  |-- all main Compose services running
-                  |-- no unhealthy/restarting containers
-                  `-- root filesystem below threshold
+rpi5-monitor.timer -> rpi5-monitor.service -> rpi5-monitor
+  Docker/SSH/Cloudflared -> main Compose running/health -> disk threshold
+
+Service OnSuccess/OnFailure -> isolated Telegram notifier
 ```
 
-`systemd` owns scheduling, missed-run catch-up for the weekly job and failure notification triggering. There is no separate activation framework in the scheduled path.
+The main Compose update scope is `/home/andris/docker`. App-specific
+deployment and public endpoints belong to application deployers and Uptime
+Kuma; Hermes is separate/manual. APT owns APT-installed software.
 
-## Ownership boundaries
+The updater never prunes volumes, runs broad `docker system prune`, or
+auto-retries/rolls back a failed Compose operation. A command failure
+short-circuits later phases, including reboot.
 
-- `/home/andris/docker`: generic weekly Compose update scope.
-- App-specific/simple-deployer projects: owned by their application/deployer workflow, not rediscovered by maintenance.
-- Public endpoint availability: owned by Uptime Kuma; maintenance does not maintain a second URL matrix.
-- Hermes: manual/separate maintenance class.
-- rclone: when installed from APT, normal APT upgrade owns its version.
+The backup wrapper and updater share the same exclusive lock. Backup code
+is retained even though backups are not launched by these two timers.
 
-## Docker cleanup
-
-The weekly job uses only narrow Docker primitives:
-
-- `docker image prune -f --filter until=<age>`: dangling images only;
-- `docker buildx prune -f --filter until=<age> --max-used-space <limit>`: bounded build cache.
-
-It never runs `docker system prune`, never prunes volumes, and never uses `docker image prune -a`.
-
-## Failure model
-
-A command failure exits the oneshot service non-zero. `systemd` records the result in the journal and activates the notification unit through `OnFailure=`. There is no runtime classifier, doctor or automatic repair layer.
-
-The scheduled updater does not implement rollback. Docker Compose only recreates a service when its configuration or image changed; persistent volumes remain attached by Compose. Recovery after a failed mutation is an explicit operator action.
-
-## References
-
-- systemd oneshot services: https://manpages.debian.org/bookworm/systemd/systemd.service.5.en.html
-- systemd timers/Persistent: https://manpages.debian.org/bookworm/systemd/systemd.timer.5.en.html
-- systemd OnFailure: https://manpages.debian.org/bookworm/systemd/systemd.unit.5.en.html
-- Debian apt-get: https://manpages.debian.org/bookworm/apt/apt-get.8.en.html
-- Docker Compose pull: https://docs.docker.com/reference/cli/docker/compose/pull/
-- Docker Compose up: https://docs.docker.com/reference/cli/docker/compose/up/
-- Docker image prune: https://docs.docker.com/reference/cli/docker/image/prune/
-- Docker buildx prune: https://docs.docker.com/reference/cli/docker/buildx/prune/
+See [lifecycle](MAINTENANCE_LIFECYCLE.md),
+[configuration](CONFIGURATION.md) and [official references](REFERENCES.md).
