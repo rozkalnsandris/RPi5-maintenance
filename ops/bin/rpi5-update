@@ -37,6 +37,29 @@ on_error() {
 }
 trap on_error ERR
 
+# APT may restart dockerd and the AdGuard-backed host DNS resolver.
+# Wait for two consecutive successful checks before any image pull.
+wait_for_post_apt_docker_dns() {
+    local check consecutive=0
+    log 'Waiting for Docker and registry DNS after APT upgrade'
+    for ((check=1; check<=12; check++)); do
+        if timeout 5 docker info >/dev/null 2>&1 &&
+           timeout 5 getent ahostsv4 auth.docker.io >/dev/null 2>&1; then
+            consecutive=$((consecutive + 1))
+            if (( consecutive >= 2 )); then
+                log 'Docker and registry DNS ready'
+                return 0
+            fi
+        else
+            consecutive=0
+        fi
+        if (( check < 12 )); then
+            sleep 5
+        fi
+    done
+    fail 'phase=docker-ready Docker or registry DNS not stable after APT upgrade (12 checks)'
+}
+
 [[ ${EUID:-$(id -u)} -eq 0 ]] || fail 'run as root'
 
 if [[ -e "$CONFIG_FILE" ]]; then
@@ -61,7 +84,7 @@ MONITOR_BIN="${MONITOR_BIN:-/usr/local/sbin/rpi5-monitor}"
 case "$REBOOT_POLICY" in if-needed|never) ;; *) fail 'REBOOT_POLICY must be if-needed or never' ;; esac
 [[ -x "$MONITOR_BIN" ]] || fail "monitor missing or not executable: $MONITOR_BIN"
 
-for command_name in apt-get docker flock journalctl systemctl systemd-tmpfiles; do
+for command_name in apt-get docker flock getent journalctl sleep systemctl systemd-tmpfiles timeout; do
     command -v "$command_name" >/dev/null 2>&1 || fail "missing command: $command_name"
 done
 
@@ -99,6 +122,9 @@ phase='apt'
 apt-get update
 DEBIAN_FRONTEND=noninteractive apt-get upgrade -y --with-new-pkgs --no-remove
 apt-get check
+
+phase='docker-ready'
+wait_for_post_apt_docker_dns
 
 phase='docker-pull'
 (
