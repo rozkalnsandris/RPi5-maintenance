@@ -1,43 +1,85 @@
 # Current handoff
 
-## Canonical state
+## Canonical ownership
 
-GitHub is canonical for repository source/policy/tests; the RPi5 is canonical
-for installed files, systemd/Docker and observed health. Refresh mutable SHA,
-CI and host evidence rather than treating these notes as current proof.
+GitHub is canonical for repository source, policies, PRs, CI and continuity.
+The live RPi5 is canonical for installed files, packages, Docker, systemd,
+endpoints, locks and reboot requirement. Always refresh mutable states.
 
-## Active maintenance model
+## Last read-only audit — 2026-10-11 10:25 CEST
 
-- Weekly `rpi5-update.timer` (Sunday 02:20): conservative APT,
-  bounded post-APT Docker/DNS readiness, main Compose pull/up, narrow cleanup,
-  read-only monitor and conditional reboot.
-- Daily `rpi5-monitor.timer` (09:00): Docker/SSH/Cloudflared, 12 main
-  Compose services, unhealthy/restarting state and root disk threshold.
-- OnSuccess/OnFailure: systemd Telegram notifier.
-- Backup wrapper/core share the maintenance lock; other applications,
-  Uptime Kuma and Hermes remain separate owners.
+- GitHub source snapshot: main `a790b47204a31ef61008c477109d212031c89ed0`;
+  PR #77 merged and left 61 repository files, without changing active runtime code.
+  Exact-main `validate` check passed at this audit.
+- LIVE host: `rpi5`. All active updater, monitor, notifier/helper and five
+  systemd-unit Git blobs matched GitHub. The backup wrapper, backup core and
+  shared lock library also matched the retained repository source.
+- Installed updater: `/usr/local/sbin/rpi5-update`, Git blob
+  `c4054933c4990a34dd1ff5ca90e1588d69b2fefa` (DNS readiness fix from
+  merged PR #76, installed separately with exact LIVE authorization).
+- The real `rpi5-update --check` and the monitor both passed; main Compose
+  expected/running = 12/12; Docker, SSH, Cloudflared, containerd and AdGuard
+  responded; registry DNS resolved; root filesystem 59%, `dpkg --audit` empty
+  and `/run/reboot-required` absent. No shared maintenance lock holder observed.
+- On 2026-10-11 at 02:21 CEST, the scheduled updater *before this DNS fix*
+  failed at `docker-pull`: host resolver timeout for `auth.docker.io` following
+  APT/Docker updates. The sticky `rpi5-update.service=failed` result persists;
+  it is historical, not proof of a current outage. The failure notifier unit
+  reported success. No operator reset, manual retry or reboot was performed.
+- Both maintenance timers remain active. The next daily monitor was scheduled
+  for 2026-10-12 09:00 CEST; next weekly update for 2026-10-18 02:20 CEST.
+  These are dated observations, not future-state guarantees.
 
-## Last verified incident and installation evidence (2026-10-11)
+## Active simple model
 
-PR #76 was squash-merged into source commit
-`fc39ebae77a9b305dee6d86f31cb6531cc87e587` (validate passed).
-The authorized single-file LIVE installation of `/usr/local/sbin/rpi5-update`
-was verified with blob `c4054933c4990a34dd1ff5ca90e1588d69b2fefa`.
-A later read-only host check returned `rpi5-update --check: PASS`,
-`rpi5-monitor: PASS`, 12 main services and reboot not required.
-The 2026-10-11 02:21 failed systemd state remained historical, from a
-Docker Hub DNS timeout after Docker package upgrades.
+Weekly `rpi5-update.timer` -> conservative APT -> two consecutive bounded
+Docker/DNS readiness checks -> pull/up only main Compose `/home/andris/docker`
+-> narrow cleanup -> monitor -> reboot only after success and if required.
 
-Do not infer current production status from these dated observations.
+Daily `rpi5-monitor.timer` -> Docker/SSH/Cloudflared, main Compose running
+services, Docker unhealthy/restarting state and root disk threshold. Telegram
+notifications use a separate, credential-isolated systemd unit.
 
-## Repository cleanup continuation
+Only the five active bin files, two library files and five systemd unit files
+remain in `ops/`; the backup wrapper/core/shared-lock path is intentionally
+retained. Application-specific deployers and Uptime Kuma own application and
+public-endpoint health, Hermes remains manual, and APT owns APT-managed rclone.
+Old V21–V28 activation/doctor/evidence source stays in Git history, not in
+the active maintenance tree.
 
-The simplified scheduled runtime is deliberately limited to five bin
-entrypoints, two library files and five systemd unit files, including the
-retained backup/lock path. Old V21–V28 activation/doctor/evidence engines,
-historical tests and documents are removed from the working tree only;
-they remain available from historical Git commits.
+## Audit backlog and unresolved risks
 
-This repository cleanup is source-only and does not install, restart,
-clean or delete anything on RPi5. Merge needs explicit owner approval.
-No LIVE action is necessary solely for repository decluttering.
+The audit found 24 open issues and no open PR *before this handoff update*.
+The canonical broader audit index remains #10 with host ownership coordinated
+through `rozkalnsandris/RPi5_main#453`. Do not treat old issue acceptance text
+as an instruction to restore the retired complex maintenance framework.
+
+- #22: GitHub main branch was `protected=false`; settings/ruleset mutation
+  requires its own explicit owner decision.
+- #17: host Debian 12 Bookworm LTS support visibility is incomplete;
+  `debian-security-support` was not installed at audit time.
+- #19: Debian `apt-daily.timer` and `apt-daily-upgrade.timer` are active
+  alongside weekly maintenance; overlapping APT ownership still requires review.
+- #20: backup lock/source parity is verified, not full coverage or restore
+  proof. Keep the backup/restore issue open.
+- #23: old failed-unit status remains visible; do not clear it without
+  reviewed root-cause evidence and explicit LIVE authorization.
+- #12/#15: meaningful service health and mutable Docker image freshness are
+  still cross-repository ownership questions. Of 12 main Compose services,
+  only one declared a healthcheck and eight use `:latest`; avoid a second
+  maintenance health matrix or auto-reconcile policy.
+- #37/#38/#39/#41: older P3 collector/Hermes/classifier plans remain proposed,
+  not part of the approved simple scheduled runtime. Re-scope/transfer/close
+  only after issue-level review, never from old roadmap text alone.
+
+## Exact current lane / next gate
+
+Observe the next *naturally scheduled* weekly run on 2026-10-18 using only
+read-only job, Docker/DNS/health, package and reboot evidence. Confirm whether
+the post-APT readiness fix prevented a repeat; do not infer success from
+`--check`, a passed CI job, or an already healthy host. Do not start the weekly
+updater manually as part of the audit.
+
+No new LIVE mutation or authorization was used by this read-only audit.
+Changing repository source/this handoff requires normal PR review and an
+explicit MERGE decision; merge never authorizes host mutation.
