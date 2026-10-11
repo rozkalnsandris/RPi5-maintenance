@@ -1,25 +1,15 @@
-# Official references
+# Official references for the active maintenance
 
-The design should be revalidated against current upstream documentation when implementation changes behavior.
+- [Docker Compose pull](https://docs.docker.com/reference/cli/docker/compose/pull/)
+- [Docker Compose up and --wait](https://docs.docker.com/reference/cli/docker/compose/up/)
+- [Docker Compose config](https://docs.docker.com/reference/cli/docker/compose/config/)
+- [Docker image prune](https://docs.docker.com/reference/cli/docker/image/prune/)
+- [Docker buildx prune](https://docs.docker.com/reference/cli/docker/buildx/prune/)
+- [systemd service units](https://www.freedesktop.org/software/systemd/man/latest/systemd.service.html)
+- [systemd timer units](https://www.freedesktop.org/software/systemd/man/latest/systemd.timer.html)
+- [systemd unit dependencies and OnFailure](https://www.freedesktop.org/software/systemd/man/latest/systemd.unit.html)
+- [Debian apt-get](https://manpages.debian.org/bookworm/apt/apt-get.8.en.html)
+- [GitHub file removal and repository history](https://docs.github.com/en/repositories/working-with-files/managing-files/deleting-files-in-a-repository)
 
-## Docker
-
-- Compose `pull`: https://docs.docker.com/reference/cli/docker/compose/pull/
-- Compose `up` (`--wait`, `--wait-timeout`): https://docs.docker.com/reference/cli/docker/compose/up/
-- Compose `config`: https://docs.docker.com/reference/cli/docker/compose/config/
-- Compose project naming/isolation: https://docs.docker.com/compose/how-tos/project-name/
-- Compose startup/dependency order: https://docs.docker.com/compose/how-tos/startup-order/
-- Compose CLI / parallel option: https://docs.docker.com/reference/cli/docker/compose/
-- Compose `down`: https://docs.docker.com/reference/cli/docker/compose/down/
-- Docker image inspect: https://docs.docker.com/reference/cli/docker/image/inspect/
-- Docker service rollback (Swarm distinction): https://docs.docker.com/reference/cli/docker/service/rollback/
-
-## systemd
-
-- systemd.service: https://www.freedesktop.org/software/systemd/man/latest/systemd.service.html
-- systemd.unit: https://www.freedesktop.org/software/systemd/man/latest/systemd.unit.html
-
-## Debian
-
-- Periodic updates / unattended-upgrades: https://wiki.debian.org/PeriodicUpdates
-- Debian systemd package: https://packages.debian.org/trixie/systemd
+Keep the operational implementation small; do not add a duplicate Docker
+health/rollback, APT orchestration, or public-URL monitoring framework.

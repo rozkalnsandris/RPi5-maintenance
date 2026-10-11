@@ -40,6 +40,6 @@ Production must consume a pinned immutable release/commit. Creating or merging s
 
 ## Repository metadata
 
-Recommended description: `Safety-first maintenance control plane for a production Raspberry Pi 5.`
+Recommended description: `Small, safety-first APT/Docker maintenance and monitoring for one Raspberry Pi 5.`
 
 Recommended topics: `raspberry-pi`, `raspberry-pi-5`, `maintenance`, `docker-compose`, `systemd`, `debian`, `homelab`, `devops`, `sre`.

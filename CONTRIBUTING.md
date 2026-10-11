@@ -1,5 +1,7 @@
 # Contributing
 
-Prefer one behavioral concern per pull request. Every behavioral change must state: problem, evidence, invariant, change, tests, operational impact, rollback and whether production activation is required.
-
-Extraction/parity PRs must not mix source movement with behavioral changes. A failing production incident should first become a reproducible test or fixture before changing policy where feasible.
+One scope per PR. Preserve the active small updater/monitor and the shared
+backup lock. Test source/CI changes without production services or secrets.
+Describe any behavioral change, evidence, verification, operator impact
+and rollback semantics. Merge and LIVE installation need separate owner
+authorization; do not run maintenance while reviewing source.

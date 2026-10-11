@@ -1,27 +1,29 @@
 # Maintenance lifecycle
 
-## Weekly update
+## Weekly update — Sunday 02:20
 
-1. Read-only preflight: Docker daemon and `/home/andris/docker` Compose config.
-2. Acquire the shared maintenance lock.
-3. `apt-get update`.
-4. `apt-get upgrade -y --with-new-pkgs --no-remove` and `apt-get check`.
-5. `docker compose pull --ignore-buildable` in `/home/andris/docker`.
+1. Read-only check of Docker and the main Compose configuration.
+2. Acquire the shared exclusive maintenance/backup lock.
+3. Conservative `apt-get update`, `upgrade --with-new-pkgs --no-remove`,
+   then `apt-get check`.
+4. After APT may have restarted Docker/AdGuard, wait for **two consecutive**
+   successful Docker daemon and Docker Hub DNS checks, with a finite budget
+   of 12 checks. Fail before pulling if readiness does not recover.
+5. `docker compose pull --ignore-buildable` for `/home/andris/docker`.
 6. `docker compose up -d --no-build --wait --wait-timeout 180`.
-7. Bounded cleanup: APT autoclean, journal vacuum, tmpfiles clean, dangling-image prune and BuildKit cache cap.
-8. Run `rpi5-monitor`.
-9. If `/run/reboot-required` exists and policy is `if-needed`, reboot.
+7. Bounded APT/journal/tmpfiles/dangling-image/BuildKit cleanup.
+8. Run the daily monitor checks.
+9. Reboot only if `/run/reboot-required` exists and policy allows it.
 
-Any non-zero command stops the oneshot service. There is no automatic retry or rollback.
+A failure stops the sequence: no retry of a failed Compose pull, no automatic
+rollback, no cleanup or reboot after an update failure.
 
-## Daily monitor
+## Daily monitor — 09:00
 
-The monitor is read-only. It checks only host/runtime basics that maintenance owns:
+Verify `docker.service`, `ssh.service` and `cloudflared.service`;
+the 12 declared main Compose services are running; no container is
+`unhealthy` or `restarting`; root filesystem usage is below threshold.
+This is **not** full application-health verification: Uptime Kuma owns public
+endpoint monitoring and application deployers own app-specific checks.
 
-- `docker.service`, `ssh.service`, `cloudflared.service` are active;
-- Docker responds;
-- all services declared by the main Compose project are running;
-- no running container reports `unhealthy` or `restarting`;
-- `/` usage remains below the configured threshold.
-
-Public URL checks belong to Uptime Kuma and are intentionally not duplicated here.
+The updater and daily monitor share no automatic repair framework.

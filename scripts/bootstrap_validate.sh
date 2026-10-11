@@ -2,14 +2,19 @@
 set -euo pipefail
 root="${1:-.}"
 required=(
-  README.md AGENTS.md LICENSE VERSION CHANGELOG.md
-  SOURCE_BASELINE.md SOURCE_EXTRACTION_MANIFEST.txt
-  docs/ARCHITECTURE.md docs/FAILURE_MODEL.md docs/MIGRATION_FROM_RPI5_MAIN.md
-  docs/INCIDENT_2026-09-06.md docs/REFERENCES.md
+  README.md AGENTS.md HANDOFF.md LICENSE SECURITY.md
+  Makefile
+  docs/ARCHITECTURE.md docs/MAINTENANCE_LIFECYCLE.md docs/OPERATIONS_RUNBOOK.md
+  docs/README-LV.md docs/CONFIGURATION.md docs/REFERENCES.md
+  config/rpi-update.conf.example
+  ops/bin/rpi5-update ops/bin/rpi5-monitor ops/bin/rpi5-maintenance-notify
+  ops/bin/rpi5-backup ops/bin/rpi5-backup-serialized
+  ops/lib/rpi5-maintenance-locks.sh ops/lib/rpi5-maintenance-telegram.py
+  ops/systemd/rpi5-update.service ops/systemd/rpi5-update.timer
+  ops/systemd/rpi5-monitor.service ops/systemd/rpi5-monitor.timer
+  ops/systemd/rpi5-maintenance-notify@.service
 )
 for f in "${required[@]}"; do
-  [[ -f "$root/$f" ]] || { echo "missing required bootstrap file: $f" >&2; exit 1; }
+  [[ -f "$root/$f" ]] || { echo "missing active file: $f" >&2; exit 1; }
 done
-bash -n "$root/scripts/extract_from_rpi5_main.sh"
-bash -n "$root/scripts/verify_extraction.sh"
-echo "bootstrap validation PASS"
+echo "simple maintenance bootstrap PASS"

@@ -1,25 +1,15 @@
 # Project boundary
 
-## This repository owns
+This repository owns the small RPi5 maintenance **source**:
+the weekly updater, daily monitor, Telegram notifier, their systemd units,
+the shared maintenance/backup lock implementation, tests and operator docs.
 
-- maintenance scheduling contracts and orchestration source;
-- package-update policy integration;
-- Docker Compose update transaction policy;
-- verifier/health interpretation;
-- bounded doctor playbooks;
-- maintenance locks;
-- reboot decision policy;
-- evidence/reporting formats;
-- systemd units directly belonging to maintenance;
-- release, provenance, install and rollback contracts for the maintenance product.
+The backup runner and wrapper are retained here because they share the
+maintenance lock. Backup schedules/data remain separately controlled.
 
-## This repository does not own
+This repository does not control application source or app-specific deploys
+(CV, Weather, Coloring Pages, Hermes Deals, etc.), Cloudflare, secrets,
+arbitrary host repair, or application data migrations.
 
-- Home Assistant, Grafana, AdGuard, Prometheus, Hermes, Hermes Deals/Tech, CV application source;
-- application-specific production Compose configuration except interfaces required by maintenance;
-- Cloudflare configuration;
-- host secrets or credentials;
-- arbitrary host/network/storage administration;
-- application data migrations.
-
-`RPi5_main` remains the canonical host/application integration repository until the migration explicitly moves an interface to this repository.
+Production RPi5 runtime state must be verified on the host. GitHub source
+and merged PRs are not proof of deployment.

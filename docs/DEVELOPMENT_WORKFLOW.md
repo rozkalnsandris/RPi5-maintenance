@@ -1,14 +1,13 @@
 # Development workflow
 
-1. Start from current `main` and current repository instructions.
-2. Select one issue/work item and define evidence plus invariant.
-3. Create a short-lived branch.
-4. Add or update a deterministic test/fixture before changing operational policy where feasible.
-5. Keep extraction/path-only changes separate from behavioral changes.
-6. Run local validation.
-7. Open a PR with problem, change, tests, operational impact and rollback.
-8. Merge only after required CI/review gates are satisfied.
-9. Create a release separately when the change is intended for consumption.
-10. Production activation remains a distinct authorized operation against an exact release.
+1. Read current `AGENTS.md`, `HANDOFF.md`, `main` and the relevant work item.
+2. Change only needed source, docs or tests in a short-lived branch.
+3. Run `make validate` without a production Docker socket or secrets.
+4. Open a Draft PR; verify exact-head CI, diff, reviews and unresolved threads.
+5. Mark Ready only after required checks pass.
+6. Merge only after explicit owner authorization.
+7. Install on RPi5 only with a **separate exact LIVE authorization**, pinned
+   source identity, live preflight and verification.
 
-Do not debug by repeatedly mutating the production RPi5. Capture evidence, reproduce with fakes/fixtures, fix in source, then prove the release candidate before activation.
+Historical V21–V28 activation/extraction sources remain in Git history.
+Do not revive them as a shortcut for host repair.
