@@ -88,6 +88,234 @@ for command_name in apt-get docker flock getent journalctl sleep systemctl syste
     command -v "$command_name" >/dev/null 2>&1 || fail "missing command: $command_name"
 done
 
+started_at="$(date +%s)"
+
+# Snapshots of main Compose container image IDs only; no other app health.
+compose_images_snapshot() (
+    cd "$MAIN_COMPOSE_DIR"
+    docker compose images --format json | python3 -c '
+import json, re, sys
+for image in json.load(sys.stdin):
+    name = str(image.get("Repository", "")) + ":" + str(image.get("Tag", ""))
+    image_id = str(image.get("ID", ""))
+    if re.fullmatch(r"[A-Za-z0-9._/@:-]{1,160}", name) and re.fullmatch(r"sha256:[0-9a-f]{64}", image_id):
+        print(name + "\t" + image_id[7:19])
+'
+)
+
+# Root writes a sanitized report bound to the exact systemd invocation.
+# The credential-isolated notifier reads only this allowlisted information.
+write_weekly_report() {
+    local invocation="${INVOCATION_ID:-}" dir='/run/rpi5-maintenance-reports'
+    local apt_count reclaimed duration time_text reboot_state tmp image_name image_id old_id changes=0
+    local -A before=()
+    [[ "$invocation" =~ ^[0-9a-f]{32}$ ]] || fail 'missing systemd invocation for weekly report'
+    apt_count="$(journalctl "_SYSTEMD_INVOCATION_ID=$invocation" --no-pager -o cat |
+        sed -nE 's/^([0-9]+ upgraded, [0-9]+ newly installed, [0-9]+ to remove and [0-9]+ not upgraded)\.$/\1/p' | tail -n 1)"
+    reclaimed="$(journalctl "_SYSTEMD_INVOCATION_ID=$invocation" --no-pager -o cat |
+        sed -nE 's/^Total reclaimed space: ([0-9]+(\.[0-9]+)?[A-Za-z]+)$/\1/p' | tail -n 2 | paste -sd '+' -)"
+    [[ -n "$apt_count" ]] || apt_count='pabeigts (pakotņu skaits nav pieejams)'
+    [[ -n "$reclaimed" ]] || reclaimed='apjoms nav pieejams'
+    duration=$(( $(date +%s) - started_at ))
+    printf -v time_text '%02d:%02d:%02d' "$((duration / 3600))" "$(((duration / 60) % 60))" "$((duration % 60))"
+    reboot_state='NAV vajadzīgs'
+    if [[ -e /run/reboot-required ]]; then
+        if [[ "$REBOOT_POLICY" == if-needed ]]; then
+            reboot_state='PIEPRASĪTS (pēcreboot pārbaude nav veikta)'
+        else
+            reboot_state='VAJADZĪGS (politika: never)'
+        fi
+    fi
+    install -d -o root -g root -m 0755 "$dir"
+    tmp="$(mktemp "$dir/.report.XXXXXXXX")"
+    {
+        printf '%s\n\n' '✅ RPi5 SVĒTDIENAS UPDATE VEIKSMĪGS'
+        printf '🧹 Tīrīšana (%sd): ✅ (Docker: %s)\n' "$CLEANUP_RETENTION_DAYS" "$reclaimed"
+        printf '📦 APT: %s ✅\n' "$apt_count"
+        printf '%s\n' '🐳 Docker main: ✅' '🩺 RPi5 lokālais monitors: ✅'
+        printf '⏱ Ilgums: %s\n' "$time_text"
+        printf '🔁 Reboot: %s\n\n' "$reboot_state"
+        while IFS=
+(
+    cd "$MAIN_COMPOSE_DIR"
+    docker compose config --quiet
+)
+
+if [[ "$MODE" == 'check' ]]; then
+    phase='apt-check'
+    apt-get -s upgrade --with-new-pkgs --no-remove >/dev/null
+    phase='monitor'
+    "$MONITOR_BIN"
+    log 'CHECK PASS'
+    exit 0
+fi
+
+if [[ -e "$LOCK_FILE" || -L "$LOCK_FILE" ]]; then
+    [[ -f "$LOCK_FILE" && ! -L "$LOCK_FILE" && "$(stat -c '%u' "$LOCK_FILE")" == '0' ]] ||
+        fail "unsafe shared lock: $LOCK_FILE"
+else
+    install -o root -g root -m 0600 /dev/null "$LOCK_FILE"
+fi
+exec 9<>"$LOCK_FILE"
+if ! flock -n 9; then
+    log 'SKIP: another maintenance/backup operation holds the shared lock'
+    exit 75
+fi
+
+log 'RPi5 weekly maintenance started'
+
+phase='docker-snapshot-before'
+images_before_snapshot="$(compose_images_snapshot)"
+
+# Queue a start notice through the credential-isolated systemd notifier.
+if [[ "${INVOCATION_ID:-}" =~ ^[0-9a-f]{32}$ ]]; then
+    systemctl --no-block start rpi5-maintenance-notify@start-rpi5-update.service.service ||
+        log 'WARN: start notification not queued'
+fi
+
+phase='apt'
+apt-get update
+DEBIAN_FRONTEND=noninteractive apt-get upgrade -y --with-new-pkgs --no-remove
+apt-get check
+
+phase='docker-ready'
+wait_for_post_apt_docker_dns
+
+phase='docker-pull'
+(
+    cd "$MAIN_COMPOSE_DIR"
+    docker compose pull --ignore-buildable
+)
+
+phase='docker-up'
+(
+    cd "$MAIN_COMPOSE_DIR"
+    docker compose up -d --no-build --wait --wait-timeout 180
+)
+
+phase='docker-snapshot-after'
+images_after_snapshot="$(compose_images_snapshot)"
+
+phase='cleanup'
+retention_hours=$((CLEANUP_RETENTION_DAYS * 24))
+apt-get autoclean -y
+journalctl --vacuum-time="${CLEANUP_RETENTION_DAYS}d"
+systemd-tmpfiles --clean
+docker image prune -f --filter "until=${retention_hours}h"
+docker buildx prune -f --filter "until=${retention_hours}h" --max-used-space "$BUILD_CACHE_MAX"
+
+phase='monitor'
+"$MONITOR_BIN"
+
+phase='report'
+write_weekly_report
+
+phase='reboot'
+if [[ -e /run/reboot-required ]]; then
+    if [[ "$REBOOT_POLICY" == 'if-needed' ]]; then
+        log 'Maintenance PASS; reboot required, rebooting now'
+        systemctl reboot
+    else
+        log 'Maintenance PASS; reboot required but REBOOT_POLICY=never'
+    fi
+else
+    log 'Maintenance PASS; reboot not required'
+fi
+\t' read -r image_name image_id; do
+            [[ -n "$image_name" ]] && before["$image_name"]="$image_id"
+        done <<<"$images_before_snapshot"
+        while IFS=
+(
+    cd "$MAIN_COMPOSE_DIR"
+    docker compose config --quiet
+)
+
+if [[ "$MODE" == 'check' ]]; then
+    phase='apt-check'
+    apt-get -s upgrade --with-new-pkgs --no-remove >/dev/null
+    phase='monitor'
+    "$MONITOR_BIN"
+    log 'CHECK PASS'
+    exit 0
+fi
+
+if [[ -e "$LOCK_FILE" || -L "$LOCK_FILE" ]]; then
+    [[ -f "$LOCK_FILE" && ! -L "$LOCK_FILE" && "$(stat -c '%u' "$LOCK_FILE")" == '0' ]] ||
+        fail "unsafe shared lock: $LOCK_FILE"
+else
+    install -o root -g root -m 0600 /dev/null "$LOCK_FILE"
+fi
+exec 9<>"$LOCK_FILE"
+if ! flock -n 9; then
+    log 'SKIP: another maintenance/backup operation holds the shared lock'
+    exit 75
+fi
+
+log 'RPi5 weekly maintenance started'
+
+phase='apt'
+apt-get update
+DEBIAN_FRONTEND=noninteractive apt-get upgrade -y --with-new-pkgs --no-remove
+apt-get check
+
+phase='docker-ready'
+wait_for_post_apt_docker_dns
+
+phase='docker-pull'
+(
+    cd "$MAIN_COMPOSE_DIR"
+    docker compose pull --ignore-buildable
+)
+
+phase='docker-up'
+(
+    cd "$MAIN_COMPOSE_DIR"
+    docker compose up -d --no-build --wait --wait-timeout 180
+)
+
+phase='cleanup'
+retention_hours=$((CLEANUP_RETENTION_DAYS * 24))
+apt-get autoclean -y
+journalctl --vacuum-time="${CLEANUP_RETENTION_DAYS}d"
+systemd-tmpfiles --clean
+docker image prune -f --filter "until=${retention_hours}h"
+docker buildx prune -f --filter "until=${retention_hours}h" --max-used-space "$BUILD_CACHE_MAX"
+
+phase='monitor'
+"$MONITOR_BIN"
+
+phase='reboot'
+if [[ -e /run/reboot-required ]]; then
+    if [[ "$REBOOT_POLICY" == 'if-needed' ]]; then
+        log 'Maintenance PASS; reboot required, rebooting now'
+        systemctl reboot
+    else
+        log 'Maintenance PASS; reboot required but REBOOT_POLICY=never'
+    fi
+else
+    log 'Maintenance PASS; reboot not required'
+fi
+\t' read -r image_name image_id; do
+            [[ -n "$image_name" && -n "$image_id" ]] || continue
+            old_id="${before[$image_name]:-}"
+            if [[ -n "$old_id" && "$old_id" != "$image_id" ]]; then
+                if (( changes == 0 )); then printf '%s\n' 'Atjauninātie main Docker image:'; fi
+                if (( changes < 8 )); then printf '• %s: %s → %s\n' "$image_name" "$old_id" "$image_id"; fi
+                changes=$((changes + 1))
+            fi
+        done <<<"$images_after_snapshot"
+        if (( changes == 0 )); then
+            printf '%s\n' 'Docker image: ID izmaiņas nav konstatētas'
+        elif (( changes > 8 )); then
+            printf '... un vēl %d image\n' "$((changes - 8))"
+        fi
+        printf '\nLogs: journalctl -u rpi5-update.service\n'
+    } >"$tmp"
+    chmod 0644 "$tmp"
+    mv -f -- "$tmp" "$dir/$invocation.txt"
+    log 'Sanitized weekly Telegram report ready'
+}
+
 phase='preflight'
 docker info >/dev/null
 (
