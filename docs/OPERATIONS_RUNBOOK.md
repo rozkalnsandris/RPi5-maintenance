@@ -66,10 +66,13 @@ need their own causal proof, not an inference from a historical red unit.
 The main `rpi5-monitor` intentionally checks its own host/main Compose
 scope. Do **not** make it fail on every other project's historical or
 intentional one-shot exit: that would duplicate project ownership and turn
-expected WAIT states into generic maintenance incidents. New/changed failures
-should be classified and alerted by the owning unit/project with their
-timestamp and exit reason; agreeing that owner-specific contract remains
-open in issue #23, not implemented by this runbook change.
+expected WAIT states into generic maintenance incidents. On 2026-10-18,
+the owner explicitly approved the narrower acceptance contract in
+[issue #23](https://github.com/rozkalnsandris/RPi5-maintenance/issues/23):
+**new/changed owner-significant failed-unit alerts belong to each
+application**, not to a new global `rpi5-monitor` scanner.
+The precise application-specific alert and reconciliation outcomes
+remain open with their respective owners.
 
 ### Preservation and reconciliation
 
@@ -117,8 +120,14 @@ Each owner should preserve a small, sanitized record of unit name,
 invocation timestamp, exit reason/code, affected-service state and any
 notifier outcome before deciding to reconcile it. Notify only on newly
 observed owner-significant failures, not every time an old `failed`
-status is read. Cross-project notification behavior remains an open
-acceptance item in #23 until owner policies are actually delivered.
+status is read. Cross-project notification behavior is assigned, not yet
+accepted as delivered: [Hermes Deals Lidl #906](https://github.com/rozkalnsandris/hermes-deals/issues/906),
+[Hermes Deals EDEKA #26](https://github.com/rozkalnsandris/hermes-deals/issues/26),
+and [RPi5_main Weather caller #1087](https://github.com/rozkalnsandris/RPi5_main/issues/1087).
+Weather v7 dispatch-caller source belongs to `RPi5_main`; the
+previous high-frequency timer fix under `RPi5_main#752` is complete.
+The sticky `exit=78` remains historical/unproven, not an active
+recurring-timer fault. Don't create duplicate owner-monitor jobs.
 
 Read-only check at 2026-10-18 10:02 CEST: existing Lidl
 `hermes-lidl-weekly-failure@hermes-lidl-weekly.service.service`
