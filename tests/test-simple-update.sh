@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
+# TEMP CI diagnostic: remove before Ready.
+set -x
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 FILE="$ROOT/ops/bin/rpi5-update"
 
