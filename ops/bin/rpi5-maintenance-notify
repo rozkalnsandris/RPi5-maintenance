@@ -10,6 +10,10 @@ readonly TELEGRAM_HELPER="/usr/local/lib/rpi5-maintenance/rpi5-maintenance-teleg
 readonly FALLBACK_INSTANCE="${1:-unknown.service}"
 
 case "$FALLBACK_INSTANCE" in
+    start-*)
+        fallback_unit="${FALLBACK_INSTANCE#start-}"
+        fallback_result="start"
+        ;;
     success-*)
         fallback_unit="${FALLBACK_INSTANCE#success-}"
         fallback_result="success"
@@ -31,6 +35,10 @@ exit_status="${MONITOR_EXIT_STATUS:-unknown}"
 invocation_id="${MONITOR_INVOCATION_ID:-unknown}"
 
 case "$result" in
+    start)
+        icon="🔄"
+        heading="RPi5 SVĒTDIENAS UPDATE SĀKTS"
+        ;;
     success)
         icon="✅"
         heading="RPi5 MAINTENANCE SERVICE OK"
@@ -41,7 +49,13 @@ case "$result" in
         ;;
 esac
 
-message="${icon} ${heading}
+if [[ "$result" == 'start' && "$unit" == 'rpi5-update.service' ]]; then
+    message="🔄 RPi5 SVĒTDIENAS UPDATE SĀKTS
+
+Režīms: drošs automātiskais update
+Laiks: $(date '+%Y-%m-%d %H:%M:%S %Z')"
+else
+    message="${icon} ${heading}
 
 Unit: ${unit}
 Result: ${result}
@@ -50,5 +64,21 @@ Invocation: ${invocation_id}
 Time: $(date '+%Y-%m-%d %H:%M:%S %Z')
 
 Logs: journalctl -u ${unit}"
+fi
+
+# Accept only a current root-owned regular report for the exact source
+# invocation, never an old or unrelated weekly message.
+if [[ "$result" == 'success' && "$unit" == 'rpi5-update.service' &&
+      "$invocation_id" =~ ^[0-9a-f]{32}$ ]]; then
+    report="/run/rpi5-maintenance-reports/${invocation_id}.txt"
+    if [[ -f "$report" && ! -L "$report" &&
+          "$(stat -c '%u:%a' "$report")" == '0:644' ]]; then
+        message="$(head -c 3500 -- "$report")"
+        message+="
+☁️ rclone: APT pārvaldīts; atsevišķi nav atjaunināts
+🤖 Hermes: MANUAL (nav atjaunināts)
+ℹ️ CV/publiskie servisi: ārpus šī monitora tvēruma"
+    fi
+fi
 
 printf '%s\n' "$message" | python3 "$TELEGRAM_HELPER"
