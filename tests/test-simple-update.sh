@@ -83,4 +83,25 @@ eval "$readiness_fn"
     [[ "$dns_checks" -eq 12 && "$sleeps" -eq 11 ]]
 )
 
+# Synthetic ENOSPC-like phase failure. Reuse the real updater ERR handler
+# in a separate bash process; never run APT, Docker, systemd or fill /tmp.
+error_handler="$(sed -n '/^on_error() {/,/^}/p' "$FILE")"
+[[ -n "$error_handler" ]]
+set +e
+failure_output="$(bash -c '
+    set -Eeuo pipefail
+    eval "$1"
+    trap on_error ERR
+    phase="cleanup"
+    log() { printf "%s\\n" "$*"; }
+    printf "%s\\n" "No space left on device" >&2
+    false
+    printf "%s\\n" "UNREACHABLE_MONITOR_OR_REBOOT"
+' bash "$error_handler" 2>&1)"
+failure_rc=$?
+set -e
+[[ "$failure_rc" -eq 1 ]]
+[[ "$failure_output" == *'FAIL phase=cleanup rc=1'* ]]
+[[ "$failure_output" != *'UNREACHABLE_MONITOR_OR_REBOOT'* ]]
+
 printf '%s\n' 'simple update contract PASS'
