@@ -110,7 +110,7 @@ set -e
 # Restore screenshot-style notices without broad CV/Hermes/public monitoring.
 grep -Fq 'compose_images_snapshot' "$FILE"
 grep -Fq 'write_weekly_report' "$FILE"
-grep -Fq 'journalctl "_SYSTEMD_INVOCATION_ID=$invocation"' "$FILE"
+grep -Fq 'journalctl "_SYSTEMD_INVOCATION_ID=$run_id"' "$FILE"
 grep -Fq 'rpi5-maintenance-notify@start-rpi5-update.service.service' "$FILE"
 grep -Fq 'OnSuccess=rpi5-maintenance-notify@success-%N.service' "$ROOT/ops/systemd/rpi5-update.service"
 grep -Fq 'MONITOR_INVOCATION_ID' "$ROOT/ops/bin/rpi5-maintenance-notify"
