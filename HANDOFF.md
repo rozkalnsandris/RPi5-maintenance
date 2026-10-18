@@ -180,12 +180,32 @@ not end-to-end Telegram delivery.
 `rpi5-update.service` and `rpi5-monitor.service` still report
 `Result=success`; effective journald remains persistent within
 the reviewed 128M/14d policy; reboot flag absent. All checks here
-were read-only. Next owner gate: Hermes Deals must explicitly decide
-whether Lidl WAIT(20) is an accepted nonfailure and investigate EDEKA
-shadow failure(30); Weather operator must diagnose historical exit(78)
-and its timer semantics. Do not alter `SuccessExitStatus`, notifier
-policy, retry semantics or failed-unit status before these owner
-decisions and exact LIVE authorization for any host mutation.
+were read-only.
+
+Owner approval received on 2026-10-18:
+`APPROVE RPi5-maintenance #23
+RESCOPE=APPLICATION-OWNED-FAILED-UNIT-ALERTS
+NO-GLOBAL-SYSTEMD-SCAN HANDOFF=HERMES-DEALS+WEATHER SOURCE-ONLY NO-LIVE`.
+The original #23 criterion to add global failed-unit reporting to
+`rpi5-monitor` is superseded by **application-owned** new/changed
+failure detection and notification; central monitoring remains
+host/main Compose only. Owner issues were linked and updated:
+- Lidl WAIT(20), retry/alert semantics: `hermes-deals#906`.
+- EDEKA shadow failure(30), real scheduled failure evidence:
+  `hermes-deals#26`.
+- Historical Weather v7 caller exit(78), accepted-failure or
+  controlled reconciliation decision: `RPi5_main#1087`.
+  Prior timer-flood fix `RPi5_main#752` remains completed.
+Source ownership for the Weather v7 privileged caller is
+`RPi5_main`, not `rozkalns_weather`.
+
+Issue #23 remains open only for owner responses, controlled
+failure-state reconciliation or documented accepted failed state,
+and outstanding recovery evidence. Do not change
+`SuccessExitStatus`, notifier or retry policy, issue an
+`systemctl reset-failed`, or reboot without the respective
+project-owner decision and separate exact LIVE authorization.
+Successful notifier exit=0 is not evidence of Telegram delivery.
 Post-reboot journal persistence remains untested: do not reboot
 solely to test without explicit LIVE authorization. Keep the
 simple two-timer maintenance model and retired frameworks retired.
