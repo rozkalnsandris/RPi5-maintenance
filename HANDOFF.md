@@ -123,13 +123,27 @@ evidence on 2026-10-18 09:36 CEST: systemd 252, explicit
 journal 76.2 MB; root 59% used, 93 GB free. Source template is not
 installed and must not be installed implicitly by a merge.
 
-Next gate: explicit owner decision whether to retain future journal
-history on disk, followed only then by a separate exact LIVE authorization
-for optional activation. No reboot, journal flush, config mutation or
-reset-failed was performed. Issue #23 remains open for owner-specific
-Lidl/EDEKA/Weather status and notification decisions, LIVE activation
-decision, and real recovery evidence. Keep the simple two-timer model,
-with no generic failed-unit monitoring or retired framework.
+Owner decision received on 2026-10-18:
+`APPROVE RPi5-maintenance #23 JOURNAL-RETENTION=128M/14D SOURCE-ONLY NO-LIVE`.
+The owner accepts the bounded persistent journal *policy* for future
+failure evidence, not host mutation. The reviewed candidate remains
+`config/journald-persistent.conf.example` (Git blob
+`ce51e3e384a6c3dd153c9087751fe6ebc0d0481e`). No activation is
+authorized by this approval or by a merge.
+
+Read-only LIVE preflight at 2026-10-18 09:44 CEST on `rpi5`:
+`Storage=volatile` remains effective, no `journald.conf.d` drop-ins
+were detected, target file is absent, root is at 59% usage,
+`systemd-journald.service` active/success, no reboot required.
+Before any LIVE action, refresh this evidence and exact source/release
+identity. The next genuine owner gate is a separately approved exact
+journald LIVE activation (one drop-in + restart + journal flush +
+bounded read-only verification), with fail-closed STOP on deviation and
+no automatic rollback or reboot. See `docs/OPERATIONS_RUNBOOK.md`.
+
+Issue #23 remains open for owner-specific Lidl/EDEKA/Weather failure
+decisions, alert contract and real post-reboot preservation proof. Do
+not add generic failure monitoring or restore retired frameworks.
 
 Any source/handoff change needs normal PR review and explicit MERGE;
 MERGE never authorizes host mutation.
