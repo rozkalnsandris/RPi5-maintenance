@@ -125,3 +125,46 @@ does not become a global degraded-state gate and that the updater's actual
 ERR handler stops after a synthetic cleanup failure. The latter models
 a failed operation; it is not a proof of recovery from a real `/tmp`
 ENOSPC incident or host deployment.
+
+### Source-only bounded journal persistence proposal
+
+On 2026-10-18 09:36 CEST, RPi5 ran systemd 252 (Debian 12) with
+`Storage=volatile` explicitly set in `/etc/systemd/journald.conf`.
+The persistent directory `/var/log/journal` already existed, but that
+does **not** override the explicit volatile setting. The journal used
+76.2 MB; root had 93 GB free. There is no immediate disk emergency.
+
+A small candidate file is checked in at
+[`config/journald-persistent.conf.example`](../config/journald-persistent.conf.example).
+It proposes one administrator-owned drop-in at
+`/etc/systemd/journald.conf.d/80-rpi5-maintenance-evidence.conf` with:
+
+- `Storage=persistent` to retain future journals across reboot where
+  disk storage is writable;
+- `SystemMaxUse=128M` and `SystemKeepFree=1G` to bound persistent
+  journal disk use and leave space for other consumers;
+- `SystemMaxFileSize=16M` to keep rotation granular, and
+  `MaxRetentionSec=14day` as a maximum age.
+
+These are **limits, not guarantees** of 14 days of retained history:
+heavy traffic may rotate entries sooner; active files and changing disk
+conditions can temporarily exceed nominal quota/retention expectations.
+This change will not restore already-lost Weather failure logs.
+Persistent journaling may retain sensitive messages: retain root-controlled
+access and never publish full logs.
+
+This file is **not deployed or auto-installed** by this repository.
+Before optional LIVE activation: inspect the effective configuration and
+all competing drop-ins, compare exact source/release identity, check root
+disk and mounts, confirm owner acceptance of disk use/retention/privacy,
+define the one approved activation step and its rollback/error semantics,
+and obtain **separate LIVE authorization**. Reloading/restarting journald,
+`journalctl --flush`, installing a drop-in, rebooting or reverting it
+are mutating operations, not allowed by a source merge. No reboot is needed
+to review the proposal. Verify effective settings and future persistent
+journal operation after any separately authorized activation; an actual
+post-reboot persistence proof requires a separately authorized reboot.
+
+Official Debian 12 references:
+[`journald.conf(5)`](https://manpages.debian.org/bookworm/systemd/journald.conf.5.en.html)
+and [`systemd.service(5)`](https://manpages.debian.org/bookworm/systemd/systemd.service.5.en.html).
