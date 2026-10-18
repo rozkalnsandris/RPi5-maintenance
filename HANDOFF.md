@@ -6,6 +6,32 @@ GitHub is canonical for repository source, policies, PRs, CI and continuity.
 The live RPi5 is canonical for installed files, packages, Docker, systemd,
 endpoints, locks and reboot requirement. Always refresh mutable states.
 
+## Naturally scheduled weekly run — 2026-10-18 (read-only confirmation)
+
+- At 2026-10-18 09:02 CEST, live `rpi5-update.service` had
+  `Result=success`, `ExecMainStatus=0` and finished at 02:23:14 CEST.
+  This is evidence from the actual scheduled run, not a `--check` simulation.
+- APT: 11 upgraded, 0 installed, 0 removed. Following APT, Docker and
+  registry DNS passed readiness at 02:20:57; the 2026-10-11
+  `auth.docker.io` resolver failure did not recur in this run.
+- Main Compose expected/running: 12/12; final monitor reported
+  `PASS services=12 root=59%` at 02:23:14. Maintenance cleanup reported
+  15.37 GB reclaimed. These checks are not a blanket health claim for
+  unrelated services.
+- Current root filesystem: 130G used / 235G, 93G available (59%);
+  `dpkg --audit` empty; `/run/reboot-required` absent. No reboot
+  was requested or performed by this run.
+- Both timers were active: next weekly run scheduled for 2026-10-25 02:20
+  CEST and next daily monitor for 2026-10-19 09:00 CEST (dated observations;
+  actual wall-clock timing around DST change must be checked afresh).
+- Script source/live parity was not revalidated in this observation:
+  reading `/usr/local/sbin/rpi5-update` as the remote read-only user was
+  permission-denied. The successful service result does not establish
+  immutable deployed-script identity.
+- All operator checks above were read-only. No manual updater run, interactive
+  host mutation, systemd reset, Docker prune, reboot or LIVE authorization
+  was performed during the investigation.
+
 ## Last read-only audit — 2026-10-11 10:25 CEST
 
 - GitHub source snapshot: main `a790b47204a31ef61008c477109d212031c89ed0`;
@@ -74,12 +100,16 @@ as an instruction to restore the retired complex maintenance framework.
 
 ## Exact current lane / next gate
 
-Observe the next *naturally scheduled* weekly run on 2026-10-18 using only
-read-only job, Docker/DNS/health, package and reboot evidence. Confirm whether
-the post-APT readiness fix prevented a repeat; do not infer success from
-`--check`, a passed CI job, or an already healthy host. Do not start the weekly
-updater manually as part of the audit.
+The 2026-10-18 naturally scheduled update observation is complete and PASS;
+the prior post-APT Docker/DNS failure was not reproduced.
 
-No new LIVE mutation or authorization was used by this read-only audit.
-Changing repository source/this handoff requires normal PR review and an
-explicit MERGE decision; merge never authorizes host mutation.
+Next scoped lane: issue #23, read-only classification of current failed
+systemd units and stale versus actionable failures, with minimal evidence
+and ownership only. Keep the simple weekly updater and daily monitor model;
+do not restore the retired collector/doctor framework. A source change is
+justified only by confirmed in-scope behavior, via reviewed PR. Never clear
+failed state or change systemd units/timers on the host without separate,
+exact LIVE authorization.
+
+Any source/handoff change needs normal PR review and explicit MERGE;
+MERGE never authorizes host mutation.
