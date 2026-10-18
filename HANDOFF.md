@@ -155,11 +155,33 @@ systemd reset-failed, other host changes or deployment performed.
 LIVE one-time authorization consumed. This confirms live storage now,
 not survival across a future reboot.
 
-Next #23 lane: app-owner decisions for Lidl WAIT(20), EDEKA failed
-shadow(30), historical Weather exit(78), and their notification/reconciliation
-contracts. Post-reboot journal persistence remains untested; do not reboot
-solely to test it without a separate LIVE authorization. Keep the simple
-two-timer maintenance model and do not restore retired frameworks.
+Next #23 lane — app-owned failed-unit resolution, **not** another
+RPi5 maintenance monitor. Fresh read-only rpi5 evidence 2026-10-18
+10:01–10:02 CEST: the same three failed one-shots persist. Lidl
+`hermes-lidl-weekly.service` exit 20 (00:40:12), EDEKA
+`hermes-edeka-weekly-monitor.service` exit 30 (01:10:13), and
+`rozkalns-weather-operator-v7-dispatch-caller.service` exit 78
+(2026-09-30 21:55:22). Lidl/EDEKA weekly timers remain enabled,
+active, and next due 2026-10-25 00:10 CEST. Weather's timer is
+enabled/active with no reported next realtime elapse; absence of
+a next event is not proof of a permanent outage or recovery.
+Both Hermes unit `OnFailure` notifier one-shots completed with
+`Result=success`, exit 0 on 2026-10-18 at 00:55:12 (Lidl)
+and 01:40:13 (EDEKA). That confirms **notifier execution only**,
+not end-to-end Telegram delivery.
+
+`rpi5-update.service` and `rpi5-monitor.service` still report
+`Result=success`; effective journald remains persistent within
+the reviewed 128M/14d policy; reboot flag absent. All checks here
+were read-only. Next owner gate: Hermes Deals must explicitly decide
+whether Lidl WAIT(20) is an accepted nonfailure and investigate EDEKA
+shadow failure(30); Weather operator must diagnose historical exit(78)
+and its timer semantics. Do not alter `SuccessExitStatus`, notifier
+policy, retry semantics or failed-unit status before these owner
+decisions and exact LIVE authorization for any host mutation.
+Post-reboot journal persistence remains untested: do not reboot
+solely to test without explicit LIVE authorization. Keep the
+simple two-timer maintenance model and retired frameworks retired.
 
 Any source/handoff change needs normal PR review and explicit MERGE;
 MERGE never authorizes host mutation.
