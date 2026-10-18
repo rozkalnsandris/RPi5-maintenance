@@ -168,3 +168,52 @@ post-reboot persistence proof requires a separately authorized reboot.
 Official Debian 12 references:
 [`journald.conf(5)`](https://manpages.debian.org/bookworm/systemd/journald.conf.5.en.html)
 and [`systemd.service(5)`](https://manpages.debian.org/bookworm/systemd/systemd.service.5.en.html).
+
+
+### Owner policy approved; LIVE deployment not authorized (2026-10-18)
+
+Owner instruction: `APPROVE RPi5-maintenance #23 JOURNAL-RETENTION=128M/14D
+SOURCE-ONLY NO-LIVE`. This approves exactly the retained-policy decision,
+not installation, service changes, backfill or a reboot. Existing GitHub
+candidate blob: `ce51e3e384a6c3dd153c9087751fe6ebc0d0481e`.
+
+**Exact conditional LIVE activation plan (requires a new authorization):**
+
+1. Target only host `rpi5` and
+   `/etc/systemd/journald.conf.d/80-rpi5-maintenance-evidence.conf`.
+   Refresh `main` and reviewed candidate SHA, verify the running host,
+   effective `journald` configuration, all potential competing drop-ins,
+   source bytes/identity, destination absence, permissions, disk headroom,
+   journal health and conflict/lock state. Do not assume a GitHub merge
+   installed the file or that a staging copy exists.
+2. Under separate, exact LIVE authorization, install the **identical
+   reviewed example bytes** as one root-owned `0644` drop-in (creating
+   its `0755` configuration directory only if absent). No writes to the
+   existing `/etc/systemd/journald.conf`. Immediately verify content
+   identity and ownership; if verification fails, STOP.
+3. Restart only `systemd-journald.service` so it reads the new
+   configuration; check that it remains active. Then execute
+   `journalctl --flush` once, which the Debian Bookworm
+   `journald.conf(5)` page identifies as the switch from volatile
+   early-boot journal storage to persistent storage. These are distinct,
+   explicitly authorized mutations, not routine read-only checks.
+4. Read-only verify effective `Storage=persistent`,
+   `SystemMaxUse=128M`, `SystemKeepFree=1G`,
+   `SystemMaxFileSize=16M`, `MaxRetentionSec=14day`; confirm
+   journald service health, journal records under `/var/log/journal`,
+   journal disk usage and available root space. Do not infer
+   post-reboot persistence without a separately authorized reboot.
+
+**Fail-closed and recovery:** authorization is consumed when the first
+LIVE write begins. Any unexpected state, command error, timeout or drift
+after that point requires minimal read-only evidence and STOP. Do not
+retry, remove the drop-in, restart again, flush again, reset failed units,
+reboot, or automatically roll back. An explicit future recovery
+authorization must name the exact file/unit action and observed state.
+No automated installer, timer, dependency or monitoring feature is added.
+
+Debian Bookworm `journald.conf(5)` states that administrator drop-ins
+override the main file, `Storage=persistent` prefers
+`/var/log/journal`, and `journalctl --flush` is the supported
+transition after volatile early-boot logging. A quota is a bound, not
+a guarantee that all 14 days of messages survive rotation.
