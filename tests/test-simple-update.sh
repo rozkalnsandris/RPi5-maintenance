@@ -17,7 +17,9 @@ grep -Fq 'if [[ -e /run/reboot-required ]]' "$FILE"
 ! grep -Fq 'docker image prune -a' "$FILE"
 ! grep -Fq 'docker image prune --all' "$FILE"
 ! grep -Eq 'apt-get[^\n]*(autoremove|dist-upgrade|full-upgrade)' "$FILE"
-! grep -Fq 'RETENTION_' "$FILE"
+# The old evidence-retention framework remains retired; the simple
+# cleanup setting CLEANUP_RETENTION_DAYS is intentional.
+! grep -Fq 'RETENTION_EVIDENCE_FILE' "$FILE"
 ! grep -Fq 'CV_COMPOSE' "$FILE"
 ! grep -Fqi 'hermes' "$FILE"
 ! grep -Fq 'rclone selfupdate' "$FILE"
