@@ -153,24 +153,19 @@ This change will not restore already-lost Weather failure logs.
 Persistent journaling may retain sensitive messages: retain root-controlled
 access and never publish full logs.
 
-This file is **not deployed or auto-installed** by this repository.
-Before optional LIVE activation: inspect the effective configuration and
-all competing drop-ins, compare exact source/release identity, check root
-disk and mounts, confirm owner acceptance of disk use/retention/privacy,
-define the one approved activation step and its rollback/error semantics,
-and obtain **separate LIVE authorization**. Reloading/restarting journald,
-`journalctl --flush`, installing a drop-in, rebooting or reverting it
-are mutating operations, not allowed by a source merge. No reboot is needed
-to review the proposal. Verify effective settings and future persistent
-journal operation after any separately authorized activation; an actual
-post-reboot persistence proof requires a separately authorized reboot.
+The repository itself does **not** deploy this example automatically.
+The operator installed the exact reviewed bytes on `rpi5` on 2026-10-18
+under a separate, one-time LIVE authorization. Any subsequent change,
+restart, flush, rollback or reboot is a new LIVE mutation needing
+its own authorization. A source merge does not authorize deployment.
+Retention across a future reboot has not been verified.
 
 Official Debian 12 references:
 [`journald.conf(5)`](https://manpages.debian.org/bookworm/systemd/journald.conf.5.en.html)
 and [`systemd.service(5)`](https://manpages.debian.org/bookworm/systemd/systemd.service.5.en.html).
 
 
-### Owner policy approved; LIVE deployment not authorized (2026-10-18)
+### Historical LIVE activation plan and authority (2026-10-18)
 
 Owner instruction: `APPROVE RPi5-maintenance #23 JOURNAL-RETENTION=128M/14D
 SOURCE-ONLY NO-LIVE`. This approves exactly the retained-policy decision,
@@ -217,3 +212,35 @@ override the main file, `Storage=persistent` prefers
 `/var/log/journal`, and `journalctl --flush` is the supported
 transition after volatile early-boot logging. A quota is a bound, not
 a guarantee that all 14 days of messages survive rotation.
+
+### Actual LIVE activation evidence — 2026-10-18 09:51–09:53 CEST
+
+Explicit owner authorization:
+`AUTHORIZE LIVE RPi5-maintenance #23 JOURNAL-PERSISTENCE HOST=rpi5
+MAIN=76906edd00ff27b578203ac25f0bcf1ebd27ffd1
+SOURCE-BLOB=ce51e3e384a6c3dd153c9087751fe6ebc0d0481e
+ALLOW=EXACT-PREFLIGHT+INSTALL-ONE-DROPIN+RESTART-JOURNALD+
+FLUSH-ONCE+READ-ONLY-VERIFY NO-REBOOT NO-RETRY NO-ROLLBACK`.
+
+Host verified `rpi5`; fresh GitHub main and on-host input hash matched.
+Prior state: explicit `Storage=volatile`, no competing drop-ins,
+target absent, journald running, root at 59%, reboot not required.
+Applied the reviewed drop-in once, creating only its config directory
+(root:root 0755) and file (root:root 0644, Git blob
+`ce51e3e384a6c3dd153c9087751fe6ebc0d0481e`).
+Restarted `systemd-journald.service` **once** and executed
+`journalctl --flush` **once**. Both commands succeeded.
+Read-only verification: effective persistent storage and all four
+reviewed capacity/retention values, active/success journald,
+persistent `.journal` files under `/var/log/journal`, approximately
+79.7 MB current journal usage, 93 GB root free, updater/monitor
+`Result=success`, reboot not required. No restart or reboot beyond
+the exact authorized journald restart; no retry, rollback, failed-unit
+reset, timer or application mutation.
+
+**Remaining limits:** 14 days is a maximum age, not a retention
+guarantee; previously lost Weather logs cannot be recovered.
+No actual reboot occurred, so post-reboot journal continuity remains
+unverified. Further journal-policy changes or a reboot require fresh,
+specific LIVE approval. Issue #23 remains open for app-owned failure
+classification and reconciliation.
