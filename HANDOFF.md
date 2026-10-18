@@ -162,9 +162,16 @@ RPi5 maintenance monitor. Fresh read-only rpi5 evidence 2026-10-18
 `hermes-edeka-weekly-monitor.service` exit 30 (01:10:13), and
 `rozkalns-weather-operator-v7-dispatch-caller.service` exit 78
 (2026-09-30 21:55:22). Lidl/EDEKA weekly timers remain enabled,
-active, and next due 2026-10-25 00:10 CEST. Weather's timer is
-enabled/active with no reported next realtime elapse; absence of
-a next event is not proof of a permanent outage or recovery.
+active, and next due 2026-10-25 00:10 CEST. Read-only check
+at 2026-10-18 10:07 CEST resolved the Weather timer ambiguity:
+`rozkalns-weather-operator-v7-dispatch-caller.timer` has only
+`OnBootSec=2min`, `Persistent=false`, and no recurring
+`OnCalendar`/`OnUnitActiveSec` trigger. Its observed
+`NextElapseUSecMonotonic=infinity` after the 2026-09-30 invocation
+is expected for a consumed boot-relative one-shot timer, not a stuck
+weekly/periodic schedule. However the triggered Weather service's
+historical exit 78 remains unexplained and is still an owner-owned
+failure. No changes to this timer or a reboot are authorized.
 Both Hermes unit `OnFailure` notifier one-shots completed with
 `Result=success`, exit 0 on 2026-10-18 at 00:55:12 (Lidl)
 and 01:40:13 (EDEKA). That confirms **notifier execution only**,
