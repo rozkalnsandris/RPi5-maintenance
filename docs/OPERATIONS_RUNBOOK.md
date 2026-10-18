@@ -88,3 +88,40 @@ separate LIVE authorization. `systemctl reset-failed`, changing
 `SuccessExitStatus=`, disabling/restarting a timer/unit or rerunning a job
 are all prohibited without that permission. Do not suppress evidence simply
 to make `systemctl is-system-running` say `running`.
+
+### Owner-owned next actions, not another host monitor
+
+The 2026-10-18 09:27 read-only unit configuration confirms both Hermes
+one-shots already have `OnFailure` notifications and
+`Restart=on-failure`: Lidl at 15 minutes, EDEKA at 30 minutes.
+These retries explain why a WAIT/BLOCKED outcome can create repeated failed
+invocations. No extra `rpi5-monitor` alert, retry or global failure scanner
+is proposed.
+
+- **Lidl owner**: decide whether `one_shot_wait_source` (20) should count
+  as a handled/expected WAIT and whether a retry or failure notification
+  is appropriate. Document this as an exact unit policy, not a generic
+  suppression rule.
+- **EDEKA owner**: investigate `shadow_cycle_nonzero` (30) using its
+  existing structured run evidence, retaining the failure signal until
+  the source condition and notification policy are reviewed.
+- **Weather owner**: reconstruct `exit=78` using available non-journal
+  release/run evidence. When no evidence survives, record the uncertainty
+  and require an explicit owner decision rather than claim resolution.
+- **Journal retention**: any change from effective `Storage=volatile`
+  must be capacity-bounded, owned, source-reviewed and separately authorized
+  for LIVE. Do not turn the weekly updater's journal vacuum into a
+  general log-retention replacement.
+
+Each owner should preserve a small, sanitized record of unit name,
+invocation timestamp, exit reason/code, affected-service state and any
+notifier outcome before deciding to reconcile it. Notify only on newly
+observed owner-significant failures, not every time an old `failed`
+status is read. Cross-project notification behavior remains an open
+acceptance item in #23 until owner policies are actually delivered.
+
+Repository-only regression checks now assert that the simple monitor
+does not become a global degraded-state gate and that the updater's actual
+ERR handler stops after a synthetic cleanup failure. The latter models
+a failed operation; it is not a proof of recovery from a real `/tmp`
+ENOSPC incident or host deployment.

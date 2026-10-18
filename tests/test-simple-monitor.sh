@@ -15,5 +15,10 @@ grep -Fq 'DISK_FAIL_PERCENT="${DISK_FAIL_PERCENT:-90}"' "$FILE"
 ! grep -Fq 'curl ' "$FILE"
 ! grep -Fq 'https://' "$FILE"
 ! grep -Fq 'sleep ' "$FILE"
+# issue #23: independent, historical or intentionally blocked one-shots must
+# not turn the bounded host/main-Compose monitor into a global degraded gate.
+! grep -Eq 'systemctl[[:space:]]+is-system-running' "$FILE"
+! grep -Eq 'systemctl[[:space:]]+list-units[^\n]*failed' "$FILE"
+! grep -Fq 'systemctl reset-failed' "$FILE"
 
 printf '%s\n' 'simple monitor contract PASS'
