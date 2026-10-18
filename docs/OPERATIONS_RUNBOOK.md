@@ -129,8 +129,17 @@ journals confirm invocation and successful systemd completion, **not**
 that the alert reached Telegram. The two weekly timers were
 active/enabled and had their next event at 2026-10-25 00:10 CEST.
 The Weather dispatch caller timer was active/enabled but exposed
-no next realtime elapse at that observation; its old exit 78 has
-no proven cause. These belong to their respective application owners.
+no next realtime elapse at that observation. A subsequent read-only
+check at 10:07 CEST established that it intentionally runs just once
+after boot: `OnBootSec=2min`, `Persistent=false`, no repeating
+`OnCalendar` or `OnUnitActiveSec`. Therefore
+`NextElapseUSecMonotonic=infinity` after the invocation is expected,
+not evidence of a broken periodic scheduler. The triggered service's
+old exit 78 is still unexplained and requires Weather owner evidence.
+No timer mutation or forced reboot is warranted merely to create a
+new scheduling timestamp. Debian Bookworm reference:
+[`systemd.timer(5)`](https://manpages.debian.org/bookworm/systemd/systemd.timer.5.en.html).
+These failures belong to their respective application owners.
 Avoid adding a central duplicate failed-unit alert or clearing
 `failed` merely because an owner notifier ran successfully.
 
