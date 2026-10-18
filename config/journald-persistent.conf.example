@@ -1,0 +1,9 @@
+# SOURCE-ONLY proposal for issue #23. Not installed on RPi5.
+# Intended LIVE destination after separate exact approval:
+# /etc/systemd/journald.conf.d/80-rpi5-maintenance-evidence.conf
+[Journal]
+Storage=persistent
+SystemMaxUse=128M
+SystemKeepFree=1G
+SystemMaxFileSize=16M
+MaxRetentionSec=14day

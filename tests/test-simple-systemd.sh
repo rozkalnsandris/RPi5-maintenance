@@ -21,4 +21,18 @@ grep -Fxq 'OnCalendar=*-*-* 09:00:00' "$monitor_timer"
 ! grep -Fq 'AccuracySec=' "$monitor_timer"
 ! grep -Fq 'RandomizedDelaySec=' "$monitor_timer"
 
+
+# Reviewable, opt-in journald source proposal. Not a deployed unit.
+journal_proposal="$ROOT/config/journald-persistent.conf.example"
+[[ -f "$journal_proposal" ]]
+grep -Fxq '[Journal]' "$journal_proposal"
+grep -Fxq 'Storage=persistent' "$journal_proposal"
+grep -Fxq 'SystemMaxUse=128M' "$journal_proposal"
+grep -Fxq 'SystemKeepFree=1G' "$journal_proposal"
+grep -Fxq 'SystemMaxFileSize=16M' "$journal_proposal"
+grep -Fxq 'MaxRetentionSec=14day' "$journal_proposal"
+grep -Fq 'SOURCE-ONLY' "$journal_proposal"
+# Do not allow example to mutate systemd automatically.
+! grep -Eq '(^|[[:space:]])(systemctl|journalctl --flush|reboot|ExecStart)\b' "$journal_proposal"
+
 printf '%s\n' 'simple systemd contract PASS'

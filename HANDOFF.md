@@ -115,15 +115,21 @@ neither maintenance unit was among them and reboot was not required.
 Live unit configs showed that Lidl and EDEKA already have project-owned
 OnFailure notifications and on-failure retries (15m / 30m).
 
-Current #23 source lane: test the bounded monitor isolation and simulated
-updater cleanup failure without host mutation, and document exact owner
-decisions for Lidl WAIT(20), EDEKA shadow failure(30) and old Weather(78).
-See docs/OPERATIONS_RUNBOOK.md. After this source-only work, #23 stays open
-for owner-specific notification/reconciliation, bounded journal retention
-and real recovery evidence; none are silently treated as satisfied.
-Do not add a generic cross-project health matrix. Any LIVE reset,
-restart, unit change or journald configuration change needs its own
-explicit authorization.
+Issue #23 remaining source lane: present a single bounded, **optional**
+persistent journald drop-in candidate at config/journald-persistent.conf.example
+and documented verification/rollback/ownership gates. Read-only RPi5
+evidence on 2026-10-18 09:36 CEST: systemd 252, explicit
+/etc/systemd/journald.conf Storage=volatile; /var/log/journal exists;
+journal 76.2 MB; root 59% used, 93 GB free. Source template is not
+installed and must not be installed implicitly by a merge.
+
+Next gate: explicit owner decision whether to retain future journal
+history on disk, followed only then by a separate exact LIVE authorization
+for optional activation. No reboot, journal flush, config mutation or
+reset-failed was performed. Issue #23 remains open for owner-specific
+Lidl/EDEKA/Weather status and notification decisions, LIVE activation
+decision, and real recovery evidence. Keep the simple two-timer model,
+with no generic failed-unit monitoring or retired framework.
 
 Any source/handoff change needs normal PR review and explicit MERGE;
 MERGE never authorizes host mutation.
