@@ -120,6 +120,20 @@ observed owner-significant failures, not every time an old `failed`
 status is read. Cross-project notification behavior remains an open
 acceptance item in #23 until owner policies are actually delivered.
 
+Read-only check at 2026-10-18 10:02 CEST: existing Lidl
+`hermes-lidl-weekly-failure@hermes-lidl-weekly.service.service`
+completed successfully at 00:55:12 and EDEKA
+`hermes-edeka-weekly-monitor-failure@hermes-edeka-weekly-monitor.service.service`
+completed successfully at 01:40:13, both with exit 0. The short
+journals confirm invocation and successful systemd completion, **not**
+that the alert reached Telegram. The two weekly timers were
+active/enabled and had their next event at 2026-10-25 00:10 CEST.
+The Weather dispatch caller timer was active/enabled but exposed
+no next realtime elapse at that observation; its old exit 78 has
+no proven cause. These belong to their respective application owners.
+Avoid adding a central duplicate failed-unit alert or clearing
+`failed` merely because an owner notifier ran successfully.
+
 Repository-only regression checks now assert that the simple monitor
 does not become a global degraded-state gate and that the updater's actual
 ERR handler stops after a synthetic cleanup failure. The latter models
