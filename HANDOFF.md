@@ -131,19 +131,35 @@ failure evidence, not host mutation. The reviewed candidate remains
 `ce51e3e384a6c3dd153c9087751fe6ebc0d0481e`). No activation is
 authorized by this approval or by a merge.
 
-Read-only LIVE preflight at 2026-10-18 09:44 CEST on `rpi5`:
-`Storage=volatile` remains effective, no `journald.conf.d` drop-ins
-were detected, target file is absent, root is at 59% usage,
-`systemd-journald.service` active/success, no reboot required.
-Before any LIVE action, refresh this evidence and exact source/release
-identity. The next genuine owner gate is a separately approved exact
-journald LIVE activation (one drop-in + restart + journal flush +
-bounded read-only verification), with fail-closed STOP on deviation and
-no automatic rollback or reboot. See `docs/OPERATIONS_RUNBOOK.md`.
+LIVE journald activation performed on `rpi5` at 2026-10-18
+09:51–09:53 CEST under exact owner authorization:
+`AUTHORIZE LIVE RPi5-maintenance #23 JOURNAL-PERSISTENCE
+HOST=rpi5 MAIN=76906edd00ff27b578203ac25f0bcf1ebd27ffd1
+SOURCE-BLOB=ce51e3e384a6c3dd153c9087751fe6ebc0d0481e
+ALLOW=EXACT-PREFLIGHT+INSTALL-ONE-DROPIN+RESTART-JOURNALD+
+FLUSH-ONCE+READ-ONLY-VERIFY NO-REBOOT NO-RETRY NO-ROLLBACK`.
+Exact source blob verified on host before write. No drop-ins/target existed;
+base `/etc/systemd/journald.conf` used `Storage=volatile`.
+Installed only `/etc/systemd/journald.conf.d/80-rpi5-maintenance-evidence.conf`
+with root:root 0644 and exact Git blob
+`ce51e3e384a6c3dd153c9087751fe6ebc0d0481e`; configuration directory
+was created root:root 0755. Restarted `systemd-journald.service`
+once (active/success), ran `journalctl --flush` once (success).
+Read-only verification confirmed effective `Storage=persistent`,
+`SystemMaxUse=128M`, `SystemKeepFree=1G`, `SystemMaxFileSize=16M`,
+`MaxRetentionSec=14day`, persistent journal files under
+`/var/log/journal` (~79.7 MB total journal usage), root 59% used,
+93 GB available. Both RPi5 maintenance services retained success status;
+`/run/reboot-required` absent. No reboot, automatic retry, rollback,
+systemd reset-failed, other host changes or deployment performed.
+LIVE one-time authorization consumed. This confirms live storage now,
+not survival across a future reboot.
 
-Issue #23 remains open for owner-specific Lidl/EDEKA/Weather failure
-decisions, alert contract and real post-reboot preservation proof. Do
-not add generic failure monitoring or restore retired frameworks.
+Next #23 lane: app-owner decisions for Lidl WAIT(20), EDEKA failed
+shadow(30), historical Weather exit(78), and their notification/reconciliation
+contracts. Post-reboot journal persistence remains untested; do not reboot
+solely to test it without a separate LIVE authorization. Keep the simple
+two-timer maintenance model and do not restore retired frameworks.
 
 Any source/handoff change needs normal PR review and explicit MERGE;
 MERGE never authorizes host mutation.
