@@ -110,14 +110,20 @@ Lidl exited 20 (one_shot_wait_source, WAIT); Hermes Deals EDEKA exited 30
 exited 78 on 2026-09-30 (journal absent; cause unproven). Both rpi5 maintenance
 units were successful. The effective journald Storage is volatile.
 
-Next exact #23 lane: agree owner-specific evidence/notification and controlled
-reconciliation per failed unit. Keep main rpi5-monitor scoped to host/main
-Compose; do not add a cross-app global-failed-unit health gate or restore the
-retired collector/doctor framework. Original #23 criteria for new/changed
-unit alerts, journald retention and recovery testing remain open. Never clear
-failed state or change systemd units/timers on the host without separate,
-exact LIVE authorization. See docs/OPERATIONS_RUNBOOK.md for the bounded
-read-only procedure.
+At 2026-10-18 09:27 CEST the three failed one-shots were unchanged;
+neither maintenance unit was among them and reboot was not required.
+Live unit configs showed that Lidl and EDEKA already have project-owned
+OnFailure notifications and on-failure retries (15m / 30m).
+
+Current #23 source lane: test the bounded monitor isolation and simulated
+updater cleanup failure without host mutation, and document exact owner
+decisions for Lidl WAIT(20), EDEKA shadow failure(30) and old Weather(78).
+See docs/OPERATIONS_RUNBOOK.md. After this source-only work, #23 stays open
+for owner-specific notification/reconciliation, bounded journal retention
+and real recovery evidence; none are silently treated as satisfied.
+Do not add a generic cross-project health matrix. Any LIVE reset,
+restart, unit change or journald configuration change needs its own
+explicit authorization.
 
 Any source/handoff change needs normal PR review and explicit MERGE;
 MERGE never authorizes host mutation.
