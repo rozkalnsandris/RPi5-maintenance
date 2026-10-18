@@ -134,7 +134,7 @@ write_weekly_report() {
         printf '%s\n' '🐳 Docker main: ✅' '🩺 Lokālais RPi5 monitors: ✅'
         printf '⏱ Ilgums: %s\n🔁 Reboot: %s\n\n' "$duration" "$reboot_status"
         while IFS=$'\t' read -r name ident; do
-            [[ -n "$name" ]] && old_images["$name"]="$ident"
+            if [[ -n "$name" ]]; then old_images["$name"]="$ident"; fi
         done <<<"$images_before_snapshot"
         while IFS=$'\t' read -r name ident; do
             [[ -n "$name" && -n "$ident" ]] || continue
