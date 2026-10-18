@@ -17,7 +17,9 @@ grep -Fq 'if [[ -e /run/reboot-required ]]' "$FILE"
 ! grep -Fq 'docker image prune -a' "$FILE"
 ! grep -Fq 'docker image prune --all' "$FILE"
 ! grep -Eq 'apt-get[^\n]*(autoremove|dist-upgrade|full-upgrade)' "$FILE"
-! grep -Fq 'RETENTION_' "$FILE"
+# The old evidence-retention framework remains retired; the simple
+# cleanup setting CLEANUP_RETENTION_DAYS is intentional.
+! grep -Fq 'RETENTION_EVIDENCE_FILE' "$FILE"
 ! grep -Fq 'CV_COMPOSE' "$FILE"
 ! grep -Fqi 'hermes' "$FILE"
 ! grep -Fq 'rclone selfupdate' "$FILE"
@@ -103,5 +105,19 @@ set -e
 [[ "$failure_rc" -eq 1 ]]
 [[ "$failure_output" == *'FAIL phase=cleanup rc=1'* ]]
 [[ "$failure_output" != *'UNREACHABLE_MONITOR_OR_REBOOT'* ]]
+
+
+# Restore screenshot-style notices without broad CV/Hermes/public monitoring.
+grep -Fq 'compose_images_snapshot' "$FILE"
+grep -Fq 'write_weekly_report' "$FILE"
+grep -Fq 'journalctl "_SYSTEMD_INVOCATION_ID=$run_id"' "$FILE"
+grep -Fq 'rpi5-maintenance-notify@start-rpi5-update.service.service' "$FILE"
+grep -Fq 'OnSuccess=rpi5-maintenance-notify@success-%N.service' "$ROOT/ops/systemd/rpi5-update.service"
+grep -Fq 'MONITOR_INVOCATION_ID' "$ROOT/ops/bin/rpi5-maintenance-notify"
+grep -Fq '/run/rpi5-maintenance-reports/' "$ROOT/ops/bin/rpi5-maintenance-notify"
+grep -Fq 'stat -c' "$ROOT/ops/bin/rpi5-maintenance-notify"
+! grep -Fqi 'hermes' "$FILE"
+! grep -Fq 'CV_COMPOSE' "$FILE"
+! grep -Fq 'docker system prune' "$FILE"
 
 printf '%s\n' 'simple update contract PASS'
