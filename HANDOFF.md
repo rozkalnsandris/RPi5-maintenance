@@ -103,13 +103,21 @@ as an instruction to restore the retired complex maintenance framework.
 The 2026-10-18 naturally scheduled update observation is complete and PASS;
 the prior post-APT Docker/DNS failure was not reproduced.
 
-Next scoped lane: issue #23, read-only classification of current failed
-systemd units and stale versus actionable failures, with minimal evidence
-and ownership only. Keep the simple weekly updater and daily monitor model;
-do not restore the retired collector/doctor framework. A source change is
-justified only by confirmed in-scope behavior, via reviewed PR. Never clear
+Issue #23 read-only classification (2026-10-18 09:18 CEST) is complete:
+systemd was degraded due to three unrelated failed one-shots. Hermes Deals
+Lidl exited 20 (one_shot_wait_source, WAIT); Hermes Deals EDEKA exited 30
+(shadow_cycle_nonzero, failed owner-owned shadow run); Weather dispatch caller
+exited 78 on 2026-09-30 (journal absent; cause unproven). Both rpi5 maintenance
+units were successful. The effective journald Storage is volatile.
+
+Next exact #23 lane: agree owner-specific evidence/notification and controlled
+reconciliation per failed unit. Keep main rpi5-monitor scoped to host/main
+Compose; do not add a cross-app global-failed-unit health gate or restore the
+retired collector/doctor framework. Original #23 criteria for new/changed
+unit alerts, journald retention and recovery testing remain open. Never clear
 failed state or change systemd units/timers on the host without separate,
-exact LIVE authorization.
+exact LIVE authorization. See docs/OPERATIONS_RUNBOOK.md for the bounded
+read-only procedure.
 
 Any source/handoff change needs normal PR review and explicit MERGE;
 MERGE never authorizes host mutation.
