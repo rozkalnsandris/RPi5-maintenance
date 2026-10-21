@@ -17,5 +17,6 @@ test:
 	bash ./tests/test-simple-repo-scope.sh
 	python3 ./tests/test-maintenance-telegram-credentials.py
 	python3 ./tests/test-github-api-access-contract.py
+	python3 ./tests/test-github-first-rdc-v1.py
 
 validate: bootstrap-check static test
