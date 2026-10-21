@@ -10,6 +10,15 @@ Repository source does not prove that the same state is deployed or active in pr
 
 Never reuse old SHA, PR/CI state, runtime output, package/image version, reboot state or authorization as current evidence.
 
+## Mandatory GitHub-first / bounded RDC fallback v1
+
+Accepted shared policy: `rozkalnsandris/ops-workflows@4e89b75d7f496dfb43fd9c1eb10a995fad53fdd8` (`docs/GITHUB_FIRST_RDC_FALLBACK_V1.md`, `policy/github-first-rdc-fallback-v1.json`). Local decision contract: `.github/github-first-rdc-v1.json`; guide: `docs/GITHUB_FIRST_RDC_ADOPTION_V1.md`.
+
+- Select the tool **per individual work step**. Use connected GitHub operations for canonical repository files/source, branches, commits, issues, PRs, CI/checks, reviews, repository-state reads and continuity whenever they can produce equivalent correctness and durable evidence. Prefer GitHub Actions for safe source tests that can run there. RDC, SSH, host-shell `git`/`gh`/`curl` or a copied checkout may not replace those operations for convenience.
+- RDC is permitted only for the smallest genuinely host-local operation that connected GitHub tools **and** applicable GitHub-hosted CI cannot perform equivalently (e.g. live RPi5 systemd/Docker/APT/process/filesystem/lock/network observation, or separately authorized exact LIVE mutation). Before RDC, document a sanitized exception with `STEP`, `REPOSITORY_AND_TARGET`, `GITHUB_CAPABILITY_CHECKED`, `PRECISE_CAPABILITY_GAP`, `GITHUB_CI_NOT_EQUIVALENT_REASON`, `MINIMAL_RDC_OPERATION`, `EXISTING_AUTHORIZATION`, and `GITHUB_RETURN_EVIDENCE`. Never include protected host paths/payloads or credentials in public evidence. Return to GitHub after the bounded host step.
+- GitHub 403/429, access denial, tool error, timeout, rate limit, uncertain dispatched write, or absent authorization means **STOP**. None permits RDC as an alternate GitHub client, duplicate write, bypass, automatic retry/rollback or cleanup.
+- This is a mandatory **tool-selection preference, not new operating authority**. Existing `START`/`SYNC`/`HANDOFF.md`, FAST-LANE, independent owner MERGE gate, separate exact RPi5 LIVE gate, scheduled maintenance exception, host locking, CI/reviews, fail-closed semantics and reboot rules remain stricter and unchanged. This adoption alone never authorizes a host read without applicable scope, host mutation, merge, deploy, Docker/APT/systemd action, scheduled timer change, credential, permission, repository settings or LIVE.
+
 ## START / SYNC / AUDIT-HANDOFF
 
 Normal `START` is lightweight:
