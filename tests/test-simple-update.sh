@@ -6,6 +6,17 @@ FILE="$ROOT/ops/bin/rpi5-update"
 bash -n "$FILE"
 grep -Fq 'apt-get upgrade -y --with-new-pkgs --no-remove' "$FILE"
 grep -Fq 'docker compose pull --ignore-buildable' "$FILE"
+# Image version reporting must avoid turning opaque SHA fragments into fake versions.
+grep -Fq 'org.opencontainers.image.version' "$FILE"
+grep -Fq '"docker", "image", "inspect"' "$FILE"
+formatter="$(sed -n '/^format_image_version_change() {/,/^}/p' "$FILE")"
+[[ -n "$formatter" ]]
+eval "$formatter"
+[[ "$(format_image_version_change 3.6.1 3.7.0)" == '3.6.1 → 3.7.0' ]]
+[[ "$(format_image_version_change 3.7.0 3.7.0)" == '3.7.0 (image mainīts, versija nemainījās)' ]]
+[[ "$(format_image_version_change '-' 3.7.0)" == 'iepriekšējā versija nav norādīta → 3.7.0' ]]
+[[ "$(format_image_version_change '-' '-')" == 'image mainīts; ražotājs nav norādījis precīzu versiju' ]]
+
 grep -Fq 'docker compose up -d --no-build --wait --wait-timeout 180' "$FILE"
 grep -Fq 'docker image prune -f --filter "until=${retention_hours}h"' "$FILE"
 grep -Fq 'docker buildx prune -f --filter "until=${retention_hours}h" --max-used-space "$BUILD_CACHE_MAX"' "$FILE"
