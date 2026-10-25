@@ -94,20 +94,59 @@ started_at="$(date +%s)"
 compose_images_snapshot() (
     cd "$MAIN_COMPOSE_DIR"
     docker compose images --format json | python3 -c '
-import json, re, sys
-for image in json.load(sys.stdin):
-    name = str(image.get("Repository", "")) + ":" + str(image.get("Tag", ""))
-    digest = str(image.get("ID", ""))
+import json, re, subprocess, sys
+
+entries = []
+for item in json.load(sys.stdin):
+    name = str(item.get("Repository", "")) + ":" + str(item.get("Tag", ""))
+    digest = str(item.get("ID", ""))
     if re.fullmatch(r"[A-Za-z0-9._/@:-]{1,160}", name) and re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
-        print(name + "\t" + digest[7:19])
+        entries.append((name, digest))
+
+versions = {}
+if entries:
+    try:
+        inspected = subprocess.run(
+            ["docker", "image", "inspect", *sorted({digest for _, digest in entries})],
+            check=True, capture_output=True, text=True, timeout=25,
+        )
+        for item in json.loads(inspected.stdout):
+            labels = (item.get("Config") or {}).get("Labels") or {}
+            candidate = labels.get("org.opencontainers.image.version") or labels.get("version") or ""
+            if isinstance(candidate, str) and re.fullmatch(
+                r"v?[0-9]+(?:[.][0-9]+){1,3}(?:[-+][A-Za-z0-9.-]+)?", candidate
+            ):
+                versions[item.get("Id", "")] = candidate
+    except (OSError, subprocess.SubprocessError, ValueError, TypeError):
+        pass
+
+for name, digest in entries:
+    print(name + "\t" + digest[7:19] + "\t" + versions.get(digest, "-"))
 '
 )
+
+format_image_version_change() {
+    local before="$1" after="$2"
+    if [[ -n "$before" && "$before" != '-' && -n "$after" && "$after" != '-' ]]; then
+        if [[ "$before" == "$after" ]]; then
+            printf '%s (image mainīts, versija nemainījās)' "$after"
+        else
+            printf '%s → %s' "$before" "$after"
+        fi
+    elif [[ -n "$before" && "$before" != '-' ]]; then
+        printf '%s → versija nav norādīta' "$before"
+    elif [[ -n "$after" && "$after" != '-' ]]; then
+        printf 'iepriekšējā versija nav norādīta → %s' "$after"
+    else
+        printf '%s' 'image mainīts; ražotājs nav norādījis precīzu versiju'
+    fi
+}
 
 # Produce no raw logs or secrets: only a bounded summary tied to this run.
 write_weekly_report() {
     local run_id="${INVOCATION_ID:-}" dir='/run/rpi5-maintenance-reports'
-    local apt_count reclaimed elapsed duration reboot_status tmp name ident previous changes=0
-    local -A old_images=()
+    local apt_count reclaimed elapsed duration reboot_status tmp name ident version previous previous_version changes=0
+    local -A old_images=() old_versions=()
     [[ "$run_id" =~ ^[0-9a-f]{32}$ ]] || fail 'weekly report: missing systemd invocation ID'
     apt_count="$(journalctl "_SYSTEMD_INVOCATION_ID=$run_id" --no-pager -o cat |
         sed -nE 's/^([0-9]+ upgraded, [0-9]+ newly installed, [0-9]+ to remove and [0-9]+ not upgraded)\.$/\1/p' | tail -n 1)"
@@ -133,20 +172,26 @@ write_weekly_report() {
         printf '📦 APT: %s ✅\n' "$apt_count"
         printf '%s\n' '🐳 Docker main: ✅' '🩺 Lokālais RPi5 monitors: ✅'
         printf '⏱ Ilgums: %s\n🔁 Reboot: %s\n\n' "$duration" "$reboot_status"
-        while IFS=$'\t' read -r name ident; do
-            if [[ -n "$name" ]]; then old_images["$name"]="$ident"; fi
+        while IFS=$'\t' read -r name ident version; do
+            if [[ -n "$name" ]]; then
+                old_images["$name"]="$ident"
+                old_versions["$name"]="$version"
+            fi
         done <<<"$images_before_snapshot"
-        while IFS=$'\t' read -r name ident; do
+        while IFS=$'\t' read -r name ident version; do
             [[ -n "$name" && -n "$ident" ]] || continue
             previous="${old_images[$name]:-}"
+            previous_version="${old_versions[$name]:-}"
             if [[ -n "$previous" && "$previous" != "$ident" ]]; then
-                if (( changes == 0 )); then printf '%s\n' 'Atjauninātie main Docker image:'; fi
-                if (( changes < 8 )); then printf '• %s: %s → %s\n' "$name" "$previous" "$ident"; fi
+                if (( changes == 0 )); then printf '%s\n' 'Atjauninātie main Docker image (versijas, ja pieejamas):'; fi
+                if (( changes < 8 )); then
+                    printf '• %s: %s\n' "$name" "$(format_image_version_change "$previous_version" "$version")"
+                fi
                 changes=$((changes + 1))
             fi
         done <<<"$images_after_snapshot"
         if (( changes == 0 )); then
-            printf '%s\n' 'Docker image: ID izmaiņas nav konstatētas'
+            printf '%s\n' 'Docker image: izmaiņas nav konstatētas'
         elif (( changes > 8 )); then
             printf '... un vēl %d image\n' "$((changes - 8))"
         fi
