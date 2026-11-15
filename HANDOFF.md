@@ -212,3 +212,38 @@ simple two-timer maintenance model and retired frameworks retired.
 
 Any source/handoff change needs normal PR review and explicit MERGE;
 MERGE never authorizes host mutation.
+
+## Latest #23 read-only status — 2026-11-15
+
+This dated observation supersedes earlier **runtime status**, not the historical
+2026-10-18/25 evidence or the owner-approved application-owned alert boundary.
+See the [2026-11-15 sanitized evidence comment](https://github.com/rozkalnsandris/RPi5-maintenance/issues/23#issuecomment-6891760888).
+
+- GitHub `main` at observation: `1314ffada23b71bb6770706ad3595d870c6b5047`.
+  This is a dated source identity, not a standing future-main pin.
+- The real RPi5 systemd failed-unit list contains **two** services, both
+  Hermes-owned one-shots: `hermes-lidl-weekly.service` (WAIT / exit 20,
+  last exit 2026-11-15 00:40:15 CET) and
+  `hermes-edeka-weekly-monitor.service` (BLOCKED / exit 30, last exit
+  2026-11-15 01:10:15 CET). Each shows three bounded restarts and a
+  configured app-specific `OnFailure=` handler. This does not prove
+  Telegram delivery or establish the EDEKA root cause.
+- Both Hermes timers are enabled/active, last triggered 2026-11-15 00:10
+  CET and next due 2026-11-22 00:10 CET at this observation.
+- Weather v7 caller is **not** currently failed: `Result=success`,
+  `ExecMainStatus=0`, last exited 2026-11-14 18:05:42 CET. Its
+  owning-project issue `RPi5_main#1087` was closed after owner acceptance
+  of installed alert wiring; end-to-end alert delivery remains unproven.
+- Both RPi5 maintenance units report success; effective journald has
+  persistent 128M/14d policy; `/run/reboot-required` absent.
+
+**Current #23 gate:** The RPi5 maintenance monitor remains limited to
+host/main Compose. No global systemd scanner or `reset-failed`. Issue #23
+remains open pending owning-project resolution/acceptance of Lidl WAIT
+retry/notification semantics (`hermes-deals#906`) and EDEKA BLOCKED
+cause/status (`hermes-deals#26`). Further application source or LIVE
+changes belong to those owning projects and require their normal gates.
+
+This HANDOFF update is source-only. No host mutation, scheduled-policy
+change, service reset/restart, retry, deploy, merge or reboot is authorized
+by documenting the observation.
