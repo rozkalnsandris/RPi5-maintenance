@@ -25,6 +25,54 @@ does not resolve its cause and is not part of the automatic update.
 - Hermes: independent/manual maintenance.
 - Pinned GitHub source and installed RPi5 files have distinct identities.
 
+## Docker image retention boundary (issue #15)
+
+The weekly updater retains its conservative 14-day default:
+`docker image prune -f --filter "until=336h"` (computed from the
+configured retention days). **Without `--all`, this only removes
+dangling images**. A Hermes Deals image with a
+`ghcr.io/rozkalnsandris/hermes-deals@sha256:...` repository reference
+is not dangling, even when no container uses it. This is an expected
+scope limit, not a failed cleanup. A Docker-reported reclaimable size
+alone does not establish that an image can be safely removed.
+
+**Ownership:** `RPi5-maintenance` may inspect image/disk state and
+maintain its reviewed main-Compose cleanup. Hermes Deals releases and
+immutable GHCR images belong to the Hermes Deals application and the
+`RPi5_main` SIMPLE-DEPLOY runtime owner. Its ordinary reconciler
+pulls exact digests but explicitly forbids destructive cleanup.
+Do **not** add `docker image prune -a`, `docker system prune` or
+cross-project image deletion to the weekly updater.
+
+**Manual, owner-gated candidate procedure (not an executable policy):**
+
+1. Identify a fixed, app-owned set of **full image IDs**, record its
+   count and deterministic manifest hash, and verify image provenance.
+   The 14-day age threshold is a *candidate filter*, not deletion
+   authority; newer or rollback-sensitive images must be retained.
+2. Read-only check **all** running and stopped container image IDs,
+   every target image's complete tag/digest reference set and relevant
+   release/rollback receipts. Preserve the running production image,
+   previous known-good rollback image and any image explicitly retained
+   by an owner; if evidence is missing or changes, STOP.
+3. Before any removal, obtain separate exact one-time LIVE authorization
+   for the host, IDs and no-other-image scope. Recheck shared lock and
+   baselines. If authorized, remove only those exact references without
+   `--force` or pruning; verify before/after image-ID sets, containers,
+   volumes and free space. On error or drift after mutation begins,
+   collect minimal read-only evidence and STOP without retry/rollback.
+
+**Future scheduled retention is not approved by this runbook.**
+Its application/runtime owner must first decide retention window,
+rollback/archive protection, exact targeting, health and scheduling
+scope in a reviewed source contract. Implementing, installing or
+activating that separate cleanup then requires its own GitHub and LIVE
+gates. No GitHub merge authorizes host deletion or a timer change.
+
+References: [maintenance issue #15](https://github.com/rozkalnsandris/RPi5-maintenance/issues/15),
+[trusted SIMPLE-DEPLOY contract](https://github.com/rozkalnsandris/RPi5_main/blob/main/docs/SIMPLE_DEPLOY_HOST_V1.md),
+and [Docker image prune](https://docs.docker.com/reference/cli/docker/image/prune/).
+
 ## When systemd is `degraded` (issue #23)
 
 A `failed` result is evidence of a **unit invocation**, not automatically a
